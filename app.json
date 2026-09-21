@@ -7,10 +7,18 @@
     "icon": "./assets/images/icon.png",
     "scheme": "jam",
     "userInterfaceStyle": "dark",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/850208bd-e375-4a42-ac0d-7bc917402695"
+    },
     "ios": {
       "supportsTablet": false,
       "infoPlist": {
-        "UIBackgroundModes": ["audio"]
+        "UIBackgroundModes": [
+          "audio"
+        ]
       }
     },
     "android": {
@@ -40,6 +48,12 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "850208bd-e375-4a42-ac0d-7bc917402695"
+      }
     }
   }
 }
