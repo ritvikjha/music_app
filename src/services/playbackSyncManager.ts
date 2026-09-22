@@ -1,13 +1,14 @@
 import { io, Socket } from 'socket.io-client';
 import { CONFIG } from '../config';
 import { audioPlayer } from './audioPlayer';
-import type { SyncState, PlaybackAction, JamQueueState, JamChatMessage, JamEmojiReaction } from '../types';
+import type { SyncState, PlaybackAction, JamQueueState, JamChatMessage, JamEmojiReaction, PartyGameEvent } from '../types';
 
 type SyncStateCallback = (state: SyncState) => void;
 type MemberCountCallback = (count: number) => void;
 type QueueStateCallback = (state: JamQueueState) => void;
 type ChatMessageCallback = (msg: JamChatMessage) => void;
 type EmojiReactionCallback = (reaction: JamEmojiReaction) => void;
+type GameEventCallback = (event: PartyGameEvent) => void;
 
 /**
  * PlaybackSyncManager — owns the Socket.io connection to the Jam sync server.
@@ -22,6 +23,7 @@ class PlaybackSyncManager {
   private queueStateCallbacks: Set<QueueStateCallback> = new Set();
   private chatMessageCallbacks: Set<ChatMessageCallback> = new Set();
   private emojiReactionCallbacks: Set<EmojiReactionCallback> = new Set();
+  private gameEventCallbacks: Set<GameEventCallback> = new Set();
 
   /**
    * Connect to the sync server.
@@ -57,6 +59,15 @@ class PlaybackSyncManager {
     });
 
     this.socket.on('chat-message', (msg: JamChatMessage) => {
+      if (typeof msg.message === 'string' && msg.message.startsWith('__JAM_GAME__:')) {
+        try {
+          const gamePayload = JSON.parse(msg.message.slice('__JAM_GAME__:'.length)) as PartyGameEvent;
+          this.gameEventCallbacks.forEach((cb) => cb(gamePayload));
+          return;
+        } catch (err) {
+          console.warn('[SyncManager] Failed to parse party game event:', err);
+        }
+      }
       this.chatMessageCallbacks.forEach((cb) => cb(msg));
     });
 
@@ -234,6 +245,27 @@ class PlaybackSyncManager {
   onEmojiReaction(cb: EmojiReactionCallback): () => void {
     this.emojiReactionCallbacks.add(cb);
     return () => this.emojiReactionCallbacks.delete(cb);
+  }
+
+  /**
+   * Broadcast a party hangout game event to all room members in real-time.
+   */
+  sendGameEvent(event: PartyGameEvent): void {
+    if (!this.socket || !this.currentRoomId) return;
+    this.socket.emit('chat-message', {
+      roomId: this.currentRoomId,
+      message: '__JAM_GAME__:' + JSON.stringify(event),
+      user: { username: 'GameEngine', tag: 'PARTY' },
+      id: 'game_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
+    });
+  }
+
+  /**
+   * Subscribe to incoming synchronized party game events.
+   */
+  onGameEvent(cb: GameEventCallback): () => void {
+    this.gameEventCallbacks.add(cb);
+    return () => this.gameEventCallbacks.delete(cb);
   }
 
   /**

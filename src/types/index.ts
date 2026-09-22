@@ -141,8 +141,92 @@ export type RootStackParamList = {
 
 export type TabParamList = {
   Home: undefined;
-  Friends: undefined;
+  Library: undefined;
+  Games: undefined;
   Jam: undefined;
   Profile: undefined;
 };
+
+// ─── Social Hangout & Party Games ────────────────────────────────────────────
+
+export type PartyGameMode = 'bottle' | 'wyr' | 'nhie' | 'mlt';
+
+export type TruthOrDareDeck = 'casual' | 'spicy' | 'late_night' | 'chaotic';
+
+export interface TruthOrDareItem {
+  id: string;
+  type: 'truth' | 'dare';
+  deck: TruthOrDareDeck;
+  text: string;
+}
+
+export interface WouldYouRatherItem {
+  id: string;
+  optionA: string;
+  optionB: string;
+  percentA?: number;
+  percentB?: number;
+}
+
+export interface NeverHaveIEverItem {
+  id: string;
+  statement: string;
+}
+
+export interface MostLikelyToItem {
+  id: string;
+  prompt: string;
+}
+
+// Real-time synchronization events between party members
+export type PartyGameEvent =
+  | {
+      type: 'bottle_spin';
+      targetAngle: number;
+      durationMs: number;
+      spinnerName: string;
+      chosenPlayerIndex: number;
+    }
+  | {
+      type: 'bottle_select_card';
+      item: TruthOrDareItem;
+      deck: TruthOrDareDeck;
+      chosenBy: string;
+    }
+  | {
+      type: 'bottle_timer_start';
+      seconds: number;
+    }
+  | {
+      type: 'wyr_vote';
+      itemId: string;
+      option: 'A' | 'B';
+      username: string;
+    }
+  | {
+      type: 'wyr_next';
+      itemIndex: number;
+    }
+  | {
+      type: 'nhie_lose_life';
+      username: string;
+      remainingLives: number;
+    }
+  | {
+      type: 'nhie_next';
+      itemIndex: number;
+    }
+  | {
+      type: 'nhie_reset';
+    }
+  | {
+      type: 'mlt_vote';
+      itemId: string;
+      votedFor: string;
+      voter: string;
+    }
+  | {
+      type: 'mlt_next';
+      itemIndex: number;
+    };
 

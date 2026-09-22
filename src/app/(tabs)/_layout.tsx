@@ -75,6 +75,22 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="games"
+        options={{
+          title: 'Games',
+          headerTitle: '🎮 SQUAD PARTY ARCADE',
+          tabBarIcon: ({ color, size, focused }) => (
+            <View style={focused ? styles.activeIconWrap : null}>
+              <Ionicons
+                name={focused ? 'game-controller' : 'game-controller-outline'}
+                size={size + 1}
+                color={color}
+              />
+            </View>
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="jam"
         options={{
           title: 'Jam Room',
