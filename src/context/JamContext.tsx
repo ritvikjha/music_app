@@ -141,14 +141,47 @@ export function JamProvider({ children }: { children: React.ReactNode }) {
 
     const unsubChat = syncManager.onChatMessage((msg) => {
       setMessages((prev) => {
+        // 1. Direct ID deduplication
         if (prev.some((m) => m.id === msg.id)) return prev;
+
+        // 2. Optimistic match: if an optimistic message exists with the same sender and same text within 12 seconds
+        const optIndex = prev.findIndex(
+          (m) =>
+            m.user?.username === msg.user?.username &&
+            m.message === msg.message &&
+            Math.abs(m.timestamp - msg.timestamp) < 12000
+        );
+
+        if (optIndex !== -1) {
+          // Replace the optimistic message with the server-confirmed message
+          const updated = [...prev];
+          updated[optIndex] = msg;
+          return updated;
+        }
+
         return [...prev.slice(-49), msg];
       });
     });
 
     const unsubEmoji = syncManager.onEmojiReaction((reaction) => {
       setReactions((prev) => {
+        // 1. Direct ID deduplication
         if (prev.some((r) => r.id === reaction.id)) return prev;
+
+        // 2. Optimistic match: if an optimistic reaction exists with same sender and emoji within 6 seconds
+        const optIndex = prev.findIndex(
+          (r) =>
+            r.user?.username === reaction.user?.username &&
+            r.emoji === reaction.emoji &&
+            Math.abs(r.timestamp - reaction.timestamp) < 6000
+        );
+
+        if (optIndex !== -1) {
+          const updated = [...prev];
+          updated[optIndex] = reaction;
+          return updated;
+        }
+
         return [...prev.slice(-19), reaction];
       });
       setTimeout(() => {
@@ -264,8 +297,9 @@ export function JamProvider({ children }: { children: React.ReactNode }) {
     (text: string) => {
       const trimmed = text.trim();
       if (!trimmed) return;
+      const msgId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
       const msg: JamChatMessage = {
-        id: `msg-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+        id: msgId,
         roomId: roomId || '',
         message: trimmed,
         user: {
@@ -276,7 +310,7 @@ export function JamProvider({ children }: { children: React.ReactNode }) {
       };
       // Optimistic instant add so sender immediately sees their message!
       setMessages((prev) => [...prev.slice(-49), msg]);
-      syncManager.sendChatMessage(msg.message, msg.user);
+      syncManager.sendChatMessage(msg.message, msg.user, msg.id);
     },
     [roomId, user]
   );
@@ -284,8 +318,9 @@ export function JamProvider({ children }: { children: React.ReactNode }) {
   const sendReaction = useCallback(
     (emoji: string) => {
       if (!emoji) return;
+      const reactId = `react-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
       const reaction: JamEmojiReaction = {
-        id: `react-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+        id: reactId,
         roomId: roomId || '',
         emoji,
         user: {
@@ -299,9 +334,13 @@ export function JamProvider({ children }: { children: React.ReactNode }) {
         setReactions((prev) => prev.filter((r) => r.id !== reaction.id));
       }, 3500);
 
-      syncManager.sendEmojiReaction(emoji, {
-        username: user?.username || 'User',
-      });
+      syncManager.sendEmojiReaction(
+        emoji,
+        {
+          username: user?.username || 'User',
+        },
+        reaction.id
+      );
     },
     [roomId, user]
   );

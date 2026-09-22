@@ -197,24 +197,26 @@ class PlaybackSyncManager {
   /**
    * Send a real-time chat message to the room.
    */
-  sendChatMessage(message: string, user: { username: string; tag?: string }): void {
+  sendChatMessage(message: string, user: { username: string; tag?: string }, id?: string): void {
     if (!this.socket || !this.currentRoomId) return;
     this.socket.emit('chat-message', {
       roomId: this.currentRoomId,
       message,
       user,
+      id,
     });
   }
 
   /**
    * Send an emoji reaction to the room.
    */
-  sendEmojiReaction(emoji: string, user: { username: string }): void {
+  sendEmojiReaction(emoji: string, user: { username: string }, id?: string): void {
     if (!this.socket || !this.currentRoomId) return;
     this.socket.emit('emoji-reaction', {
       roomId: this.currentRoomId,
       emoji,
       user,
+      id,
     });
   }
 

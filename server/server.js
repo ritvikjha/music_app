@@ -255,10 +255,10 @@ io.on('connection', (socket) => {
   });
 
   // 7. Chat Message broadcast
-  socket.on('chat-message', ({ roomId, message, user }) => {
+  socket.on('chat-message', ({ roomId, message, user, id }) => {
     if (!roomId || !message) return;
     io.to(roomId).emit('chat-message', {
-      id: `${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      id: id || `${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
       roomId,
       message,
       user: user || { username: 'Anonymous' },
@@ -267,10 +267,10 @@ io.on('connection', (socket) => {
   });
 
   // 8. Emoji Reaction broadcast
-  socket.on('emoji-reaction', ({ roomId, emoji, user }) => {
+  socket.on('emoji-reaction', ({ roomId, emoji, user, id }) => {
     if (!roomId || !emoji) return;
     io.to(roomId).emit('emoji-reaction', {
-      id: `${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      id: id || `${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
       roomId,
       emoji,
       user: user || { username: 'Anonymous' },
