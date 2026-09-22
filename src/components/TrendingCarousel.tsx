@@ -27,11 +27,13 @@ interface TrendingCarouselProps {
 
 function TrendingCard({
   song,
+  index,
   onPress,
   onAddToQueue,
   isActive,
 }: {
   song: Song;
+  index: number;
   onPress: () => void;
   onAddToQueue?: () => void;
   isActive: boolean;
@@ -54,6 +56,8 @@ function TrendingCard({
     }).start();
   };
 
+  const rankStr = (index + 1).toString().padStart(2, '0');
+
   return (
     <RNAnimated.View style={[styles.cardWrapper, { transform: [{ scale: scaleAnim }] }]}>
       <TouchableOpacity
@@ -67,6 +71,11 @@ function TrendingCard({
         style={[styles.card, isActive && styles.cardActive]}
       >
         <Image source={{ uri: song.imageUrl }} style={styles.cardImage} />
+
+        {/* Cyber rank badge */}
+        <View style={styles.rankBadge}>
+          <Text style={styles.rankText}>#{rankStr}</Text>
+        </View>
 
         {/* Gradient overlay at bottom */}
         <View style={styles.cardGradient}>
@@ -101,7 +110,7 @@ function TrendingCard({
             }}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
-            <Ionicons name="add-circle" size={22} color="rgba(255,255,255,0.85)" />
+            <Ionicons name="add-circle" size={22} color={colors.accent} />
           </TouchableOpacity>
         )}
       </TouchableOpacity>
@@ -133,9 +142,10 @@ export function TrendingCarousel({
         horizontal
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.listContent}
-        renderItem={({ item }) => (
+        renderItem={({ item, index }) => (
           <TrendingCard
             song={item}
+            index={index}
             onPress={() => onSongPress(item)}
             onAddToQueue={onAddToQueue ? () => onAddToQueue(item) : undefined}
             isActive={currentSongId === item.id}
@@ -158,9 +168,11 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
   },
   headerTitle: {
-    fontSize: typography.sizes.lg,
+    fontSize: typography.sizes.md,
     fontWeight: typography.weights.bold,
     color: colors.textPrimary,
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
   },
   listContent: {
     paddingHorizontal: spacing.lg,
@@ -168,6 +180,24 @@ const styles = StyleSheet.create({
   },
   cardWrapper: {
     // Allows shadow to be visible
+  },
+  rankBadge: {
+    position: 'absolute',
+    top: spacing.sm,
+    left: spacing.sm,
+    backgroundColor: 'rgba(5, 5, 8, 0.8)',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: borderRadius.sm,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 242, 254, 0.4)',
+    zIndex: 2,
+  },
+  rankText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: colors.accent,
+    letterSpacing: 0.5,
   },
   card: {
     width: CARD_WIDTH,

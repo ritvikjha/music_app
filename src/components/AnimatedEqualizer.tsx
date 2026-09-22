@@ -99,6 +99,7 @@ export function AnimatedEqualizer({
   }));
 
   const bars = [style1, style2, style3].slice(0, barCount);
+  const neonBarColors = [colors.accent, colors.accentSecondary, colors.accentGlow];
 
   return (
     <View style={[styles.container, { height: size, gap }]}>
@@ -108,8 +109,13 @@ export function AnimatedEqualizer({
           style={[
             {
               width: barWidth,
-              backgroundColor: color,
+              backgroundColor: color !== colors.accent ? color : neonBarColors[i % neonBarColors.length],
               borderRadius: barWidth / 2,
+              shadowColor: color !== colors.accent ? color : neonBarColors[i % neonBarColors.length],
+              shadowOffset: { width: 0, height: 0 },
+              shadowOpacity: 0.8,
+              shadowRadius: 4,
+              elevation: 3,
             },
             animStyle,
           ]}

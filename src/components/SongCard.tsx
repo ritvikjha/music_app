@@ -114,19 +114,23 @@ const styles = StyleSheet.create({
   container: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: spacing.md,
+    paddingVertical: spacing.md - 1,
     paddingHorizontal: spacing.lg,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.divider,
+    borderBottomColor: 'rgba(255, 255, 255, 0.06)',
   },
   containerActive: {
-    backgroundColor: colors.accentAlpha10,
+    backgroundColor: 'rgba(0, 242, 254, 0.07)',
+    borderLeftWidth: 3,
+    borderLeftColor: colors.accent,
   },
   artwork: {
     width: 48,
     height: 48,
-    borderRadius: borderRadius.sm,
+    borderRadius: 10,
     backgroundColor: colors.backgroundInput,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
   },
   info: {
     flex: 1,
@@ -135,16 +139,19 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: typography.sizes.md,
-    fontWeight: typography.weights.medium,
+    fontWeight: typography.weights.semibold,
     color: colors.textPrimary,
     marginBottom: 2,
+    letterSpacing: 0.2,
   },
   titleActive: {
     color: colors.accent,
+    fontWeight: typography.weights.bold,
   },
   artist: {
     fontSize: typography.sizes.sm,
     color: colors.textSecondary,
+    fontWeight: '400',
   },
   trailing: {
     flexDirection: 'row',
@@ -159,5 +166,6 @@ const styles = StyleSheet.create({
   duration: {
     fontSize: typography.sizes.xs,
     color: colors.textSecondary,
+    fontWeight: '500',
   },
 });

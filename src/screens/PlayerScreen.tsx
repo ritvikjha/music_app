@@ -24,6 +24,7 @@ import { AvatarRow } from '../components/AvatarRow';
 import { SleepTimerModal } from '../components/SleepTimerModal';
 import { QueueModal } from '../components/QueueModal';
 import { LyricsModal } from '../components/LyricsModal';
+import { useKeepAwake } from 'expo-keep-awake';
 import { extractDominantColor, DEFAULT_DOMINANT_COLOR, RGBColor } from '../services/albumColors';
 import { colors, spacing, borderRadius, typography, shadows } from '../theme';
 
@@ -34,6 +35,7 @@ const ART_SIZE = SCREEN_WIDTH - 96;
  * Full-screen player modal with album art, controls, heart, dominant color tint, and Jam info.
  */
 export default function PlayerScreen() {
+  useKeepAwake();
   const {
     currentSong,
     isPlaying,
@@ -505,13 +507,15 @@ const styles = StyleSheet.create({
     marginBottom: spacing.xl,
   },
   artShadow: {
-    borderRadius: borderRadius.lg,
+    borderRadius: 22,
     backgroundColor: colors.backgroundInput,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 242, 254, 0.25)',
   },
   artwork: {
     width: ART_SIZE,
     height: ART_SIZE,
-    borderRadius: borderRadius.lg,
+    borderRadius: 20,
   },
   infoRow: {
     flexDirection: 'row',
@@ -524,14 +528,16 @@ const styles = StyleSheet.create({
     marginRight: spacing.md,
   },
   songTitle: {
-    fontSize: typography.sizes.xxl,
+    fontSize: 22,
     fontWeight: typography.weights.bold,
     color: colors.textPrimary,
     marginBottom: spacing.xs,
+    letterSpacing: 0.3,
   },
   songArtist: {
-    fontSize: typography.sizes.lg,
+    fontSize: typography.sizes.md,
     color: colors.textSecondary,
+    fontWeight: '500',
   },
   controls: {
     flexDirection: 'row',
@@ -574,12 +580,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   playButton: {
-    width: 68,
-    height: 68,
-    borderRadius: 34,
+    width: 70,
+    height: 70,
+    borderRadius: 35,
     backgroundColor: colors.accent,
     justifyContent: 'center',
     alignItems: 'center',
+    shadowColor: colors.accent,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.65,
+    shadowRadius: 18,
+    elevation: 10,
   },
   jamInfo: {
     alignItems: 'center',
@@ -633,24 +644,29 @@ const styles = StyleSheet.create({
   actionPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(184, 166, 224, 0.09)',
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs + 2,
+    backgroundColor: 'rgba(0, 242, 254, 0.08)',
+    paddingHorizontal: spacing.md + 2,
+    paddingVertical: spacing.xs + 3,
     borderRadius: borderRadius.full,
     borderWidth: 1,
-    borderColor: colors.accentAlpha25,
+    borderColor: 'rgba(0, 242, 254, 0.22)',
     gap: 6,
   },
   actionPillText: {
     fontSize: typography.sizes.xs,
-    fontWeight: typography.weights.semibold,
+    fontWeight: typography.weights.bold,
     color: colors.textPrimary,
+    letterSpacing: 0.3,
   },
   actionBadge: {
     backgroundColor: colors.accent,
-    paddingHorizontal: 5,
+    paddingHorizontal: 6,
     paddingVertical: 1,
     borderRadius: borderRadius.full,
+    shadowColor: colors.accent,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.6,
+    shadowRadius: 4,
     marginLeft: 2,
   },
   actionBadgeText: {

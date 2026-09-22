@@ -1,36 +1,47 @@
 export const colors = {
-  /** Near-black, slightly cool — primary background */
-  background: '#0A0A0F',
-  /** Elevated cards/surfaces */
-  backgroundElevated: '#16151C',
-  /** Inputs, pressed states */
-  backgroundInput: '#1F1E28',
+  /** Deep OLED pitch-black primary background */
+  background: '#050508',
+  /** Elevated obsidian glass cards/surfaces */
+  backgroundElevated: '#0E0E17',
+  /** Inputs, chips, pressed surfaces */
+  backgroundInput: '#151424',
+  /** Card background with subtle contrast */
+  backgroundCard: '#10101C',
 
-  /** Lavender accent — CTAs, active states, progress bar fill */
-  accent: '#B8A6E0',
-  /** Pressed/darker lavender variant */
-  accentPressed: '#9A85C9',
-  /** Soft lavender glow for active/playing states */
-  accentGlow: '#D4C8F0',
+  /** Electric Cyan accent — primary neon CTA, active states, progress fill */
+  accent: '#00F2FE',
+  /** Cyber Violet / Neon Purple — secondary glow and complementary highlights */
+  accentSecondary: '#A855F7',
+  neonViolet: '#A855F7',
+  neonPink: '#F43F5E',
 
-  /** Primary text — off-white */
-  textPrimary: '#F2F0F7',
-  /** Secondary/muted text — artist names, timestamps */
-  textSecondary: '#9C98A8',
+  /** Pressed/darker cyan variant */
+  accentPressed: '#00C8D6',
+  /** Soft cyan aura glow for active/playing states */
+  accentGlow: '#38BDF8',
 
-  /** Dividers and subtle borders */
-  divider: '#2A2833',
+  /** Primary text — pure white */
+  textPrimary: '#FFFFFF',
+  /** Secondary text — cyber slate silver */
+  textSecondary: '#94A3B8',
 
-  /** Error/destructive — muted, tonal */
-  error: '#E08A8A',
+  /** Subtle luminous dividers and borders */
+  divider: 'rgba(255, 255, 255, 0.08)',
+  borderNeon: 'rgba(0, 242, 254, 0.22)',
+  borderViolet: 'rgba(168, 85, 247, 0.22)',
 
-  /** Online indicator green */
-  online: '#7ECC8B',
+  /** Destructive neon crimson */
+  error: '#FF4D6D',
+
+  /** Online cyber emerald indicator */
+  online: '#10B981',
 
   /** Transparent variants */
-  accentAlpha25: 'rgba(184, 166, 224, 0.25)',
-  accentAlpha10: 'rgba(184, 166, 224, 0.10)',
-  backgroundAlpha80: 'rgba(10, 10, 15, 0.80)',
+  accentAlpha25: 'rgba(0, 242, 254, 0.25)',
+  accentAlpha10: 'rgba(0, 242, 254, 0.10)',
+  violetAlpha25: 'rgba(168, 85, 247, 0.25)',
+  violetAlpha10: 'rgba(168, 85, 247, 0.10)',
+  backgroundAlpha80: 'rgba(5, 5, 8, 0.85)',
 } as const;
 
 export const spacing = {
@@ -73,26 +84,48 @@ export const typography = {
 } as const;
 
 export const shadows = {
-  lavenderGlow: {
-    shadowColor: colors.accent,
+  cyanGlow: {
+    shadowColor: '#00F2FE',
     shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.25,
-    shadowRadius: 20,
+    shadowOpacity: 0.45,
+    shadowRadius: 18,
+    elevation: 8,
+  },
+  violetGlow: {
+    shadowColor: '#A855F7',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.45,
+    shadowRadius: 18,
+    elevation: 8,
+  },
+  neonButtonGlow: {
+    shadowColor: '#00F2FE',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.55,
+    shadowRadius: 24,
+    elevation: 12,
+  },
+  // Compatibility aliases for existing components
+  lavenderGlow: {
+    shadowColor: '#00F2FE',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.4,
+    shadowRadius: 18,
     elevation: 8,
   },
   lavenderGlowIntense: {
-    shadowColor: colors.accent,
+    shadowColor: '#A855F7',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 30,
+    shadowOpacity: 0.55,
+    shadowRadius: 28,
     elevation: 12,
   },
   cardShadow: {
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.6,
+    shadowRadius: 12,
+    elevation: 6,
   },
 } as const;
 
