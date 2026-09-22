@@ -73,6 +73,18 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     return unsubscribe;
   }, []);
 
+  // Keep lock screen & notification metadata synchronized with currentSong
+  useEffect(() => {
+    if (currentSong) {
+      audioPlayer.updateMetadata({
+        title: currentSong.title,
+        artist: currentSong.artist,
+        albumTitle: currentSong.album || undefined,
+        artworkUrl: currentSong.imageUrl || undefined,
+      });
+    }
+  }, [currentSong]);
+
   const playSong = useCallback(
     async (song: Song) => {
       setIsLoading(true);
@@ -81,7 +93,12 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       addRecent(song);
 
       try {
-        await audioPlayer.loadAndPlay(song.streamUrl);
+        await audioPlayer.loadAndPlay(song.streamUrl, {
+          title: song.title,
+          artist: song.artist,
+          albumTitle: song.album || undefined,
+          artworkUrl: song.imageUrl || undefined,
+        });
       } catch (error) {
         console.error('[Player] Failed to play song:', error);
       } finally {
@@ -168,7 +185,12 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
             if (song) {
               setCurrentSong(song);
               currentSongRef.current = song;
-              await audioPlayer.loadAndPlay(song.streamUrl);
+              await audioPlayer.loadAndPlay(song.streamUrl, {
+                title: song.title,
+                artist: song.artist,
+                albumTitle: song.album || undefined,
+                artworkUrl: song.imageUrl || undefined,
+              });
               await audioPlayer.seekTo(opts.positionMs);
               if (!opts.isPlaying) {
                 await audioPlayer.pause();

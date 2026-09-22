@@ -3,6 +3,7 @@ import {
   setAudioModeAsync,
   AudioPlayer as ExpoAudioPlayer,
   AudioStatus,
+  AudioMetadata,
 } from 'expo-audio';
 
 export interface PlaybackStatus {
@@ -24,6 +25,7 @@ class AudioPlayerService {
   private trackEndCallbacks: Set<() => void> = new Set();
   private isInitialized = false;
   private currentUri: string | null = null;
+  private currentMetadata: AudioMetadata | null = null;
   private statusSubscription: { remove: () => void } | null = null;
   private hasFiredTrackEnd = false;
 
@@ -88,14 +90,22 @@ class AudioPlayerService {
   };
 
   /**
-   * Load a new audio URI and start playing.
+   * Load a new audio URI and start playing with track metadata for lock screen & notifications.
    */
-  async loadAndPlay(uri: string): Promise<void> {
+  async loadAndPlay(uri: string, metadata?: AudioMetadata): Promise<void> {
     await this.init();
     this.hasFiredTrackEnd = false;
+    if (metadata) {
+      this.currentMetadata = metadata;
+    }
 
-    // If same URI is already loaded, just play
+    // If same URI is already loaded, update metadata if needed and just play
     if (this.currentUri === uri && this.player) {
+      if (this.currentMetadata) {
+        try {
+          this.player.updateLockScreenMetadata(this.currentMetadata);
+        } catch {}
+      }
       this.player.play();
       return;
     }
@@ -109,10 +119,42 @@ class AudioPlayerService {
         'playbackStatusUpdate',
         this.handleStatus
       );
+
+      // Enable OS lock screen & notification controls with song title, artist and artwork!
+      if (this.currentMetadata) {
+        try {
+          this.player.setActiveForLockScreen(true, this.currentMetadata, {
+            showSeekForward: true,
+            showSeekBackward: true,
+          });
+        } catch (e) {
+          console.warn('[AudioPlayer] setActiveForLockScreen error:', e);
+        }
+      }
+
       this.player.play();
     } catch (error) {
       console.error('[AudioPlayer] loadAndPlay error:', error);
       throw error;
+    }
+  }
+
+  /**
+   * Update lock screen and notification metadata (song title, artist, artwork)
+   */
+  updateMetadata(metadata: AudioMetadata): void {
+    this.currentMetadata = metadata;
+    if (this.player) {
+      try {
+        this.player.updateLockScreenMetadata(metadata);
+      } catch {
+        try {
+          this.player.setActiveForLockScreen(true, metadata, {
+            showSeekForward: true,
+            showSeekBackward: true,
+          });
+        } catch {}
+      }
     }
   }
 
