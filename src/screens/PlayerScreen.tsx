@@ -25,6 +25,7 @@ import { SleepTimerModal } from '../components/SleepTimerModal';
 import { QueueModal } from '../components/QueueModal';
 import { LyricsModal } from '../components/LyricsModal';
 import { SoundPresetsModal } from '../components/SoundPresetsModal';
+import { AddToPlaylistModal } from '../components/AddToPlaylistModal';
 import { useKeepAwake } from 'expo-keep-awake';
 import { extractDominantColor, DEFAULT_DOMINANT_COLOR, RGBColor } from '../services/albumColors';
 import { colors, spacing, borderRadius, typography, shadows } from '../theme';
@@ -58,6 +59,7 @@ export default function PlayerScreen() {
   const [showQueue, setShowQueue] = useState(false);
   const [showLyrics, setShowLyrics] = useState(false);
   const [showSoundPresets, setShowSoundPresets] = useState(false);
+  const [showAddToPlaylist, setShowAddToPlaylist] = useState(false);
 
   // Dominant artwork color
   const [artColor, setArtColor] = useState<RGBColor>(DEFAULT_DOMINANT_COLOR);
@@ -402,6 +404,15 @@ export default function PlayerScreen() {
 
         <TouchableOpacity
           style={styles.actionPill}
+          onPress={() => setShowAddToPlaylist(true)}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="bookmark-outline" size={17} color={colors.accentSecondary} />
+          <Text style={styles.actionPillText}>Playlist</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.actionPill}
           onPress={() => setShowQueue(true)}
           activeOpacity={0.7}
         >
@@ -450,6 +461,13 @@ export default function PlayerScreen() {
       <SoundPresetsModal
         visible={showSoundPresets}
         onClose={() => setShowSoundPresets(false)}
+      />
+
+      {/* Add To Playlist Modal */}
+      <AddToPlaylistModal
+        visible={showAddToPlaylist}
+        onClose={() => setShowAddToPlaylist(false)}
+        song={currentSong}
       />
     </View>
   );

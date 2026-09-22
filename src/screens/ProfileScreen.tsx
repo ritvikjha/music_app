@@ -25,6 +25,7 @@ import { useToast } from '../context/ToastContext';
 import { MiniPlayer } from '../components/MiniPlayer';
 import { AnimatedEqualizer } from '../components/AnimatedEqualizer';
 import { SoundPresetsModal } from '../components/SoundPresetsModal';
+import { SquadSection } from '../components/SquadSection';
 import { getActivePreset } from '../services/soundPresets';
 import { colors, spacing, borderRadius, typography, shadows } from '../theme';
 import type { Song } from '../types';
@@ -319,6 +320,9 @@ export default function ProfileScreen() {
             <Text style={styles.statLabel}>Top Vibe</Text>
           </View>
         </View>
+
+        {/* My Squad / Friends Section */}
+        <SquadSection />
 
         {/* Recently Played / Top Tracks Horizontal Strip */}
         {recentSongs.length > 0 && (

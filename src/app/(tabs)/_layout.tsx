@@ -63,12 +63,13 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="friends"
+        name="library"
         options={{
-          title: 'Squad',
+          title: 'Playlists',
+          headerTitle: '📚 YOUR LIBRARY',
           tabBarIcon: ({ color, size, focused }) => (
             <View style={focused ? styles.activeIconWrap : null}>
-              <Ionicons name={focused ? 'people' : 'people-outline'} size={size} color={color} />
+              <Ionicons name={focused ? 'albums' : 'albums-outline'} size={size} color={color} />
             </View>
           ),
         }}

@@ -134,19 +134,19 @@ export function LibraryScreen() {
     <View style={[styles.container, { paddingTop: insets.top }]}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity
-          onPress={() => {
-            if (activePlaylist) {
-              setSelectedPlaylist(null);
-            } else {
-              router.back();
-            }
-          }}
-          style={styles.backButton}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-        >
-          <Ionicons name="chevron-back" size={24} color={colors.textPrimary} />
-        </TouchableOpacity>
+        {activePlaylist ? (
+          <TouchableOpacity
+            onPress={() => setSelectedPlaylist(null)}
+            style={styles.backButton}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Ionicons name="chevron-back" size={24} color={colors.textPrimary} />
+          </TouchableOpacity>
+        ) : (
+          <View style={styles.headerPlaceholder}>
+            <Ionicons name="albums" size={22} color={colors.accent} />
+          </View>
+        )}
 
         <Text style={styles.title}>
           {activePlaylist ? activePlaylist.name : 'Your Library'}
@@ -442,6 +442,12 @@ const styles = StyleSheet.create({
     height: 40,
     borderRadius: 20,
     backgroundColor: colors.backgroundElevated,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  headerPlaceholder: {
+    width: 40,
+    height: 40,
     justifyContent: 'center',
     alignItems: 'center',
   },

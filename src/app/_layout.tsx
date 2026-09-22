@@ -50,7 +50,7 @@ export default function RootLayout() {
                         }}
                       />
                       <Stack.Screen
-                        name="library"
+                        name="friends"
                         options={{
                           animation: 'slide_from_right',
                         }}
