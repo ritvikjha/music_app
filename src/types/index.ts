@@ -23,7 +23,8 @@ export type PlaybackAction =
   | { type: 'play' }
   | { type: 'pause' }
   | { type: 'seek'; positionMs: number }
-  | { type: 'change-song'; songId: string };
+  | { type: 'change-song'; songId: string }
+  | { type: 'skip-next' };
 
 // ─── Jam Room ────────────────────────────────────────────────────────────────
 
@@ -72,6 +73,40 @@ export interface Friend {
 export interface User {
   username: string;
   tag: string; // 4-digit unique tag, generated on first login
+}
+
+// ─── Playlists ───────────────────────────────────────────────────────────────
+
+export interface Playlist {
+  id: string;
+  name: string;
+  description?: string;
+  createdAt: number;
+  songs: Song[];
+  coverUrl?: string;
+}
+
+// ─── Jam Room Chat & Reactions ───────────────────────────────────────────────
+
+export interface JamChatMessage {
+  id: string;
+  roomId: string;
+  message: string;
+  user: {
+    username: string;
+    tag?: string;
+  };
+  timestamp: number;
+}
+
+export interface JamEmojiReaction {
+  id: string;
+  roomId: string;
+  emoji: string;
+  user: {
+    username: string;
+  };
+  timestamp: number;
 }
 
 // ─── Navigation ──────────────────────────────────────────────────────────────

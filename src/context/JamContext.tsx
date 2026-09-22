@@ -1,8 +1,10 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { syncManager } from '../services/playbackSyncManager';
+import { audioPlayer } from '../services/audioPlayer';
 import { getSongById } from '../services/saavn';
 import { usePlayer } from './PlayerContext';
-import type { SyncState, Song, JamQueueEntry, JamQueueState } from '../types';
+import { useAuth } from './AuthContext';
+import type { SyncState, Song, JamQueueEntry, JamQueueState, JamChatMessage, JamEmojiReaction } from '../types';
 
 interface JamContextValue {
   isInRoom: boolean;
@@ -11,6 +13,8 @@ interface JamContextValue {
   isConnected: boolean;
   isHost: boolean;
   jamQueue: JamQueueEntry[];
+  messages: JamChatMessage[];
+  reactions: JamEmojiReaction[];
 
   createRoom: () => void;
   joinRoom: (code: string) => void;
@@ -21,10 +25,15 @@ interface JamContextValue {
   jamPause: () => void;
   jamSeek: (positionMs: number) => void;
   jamChangeSong: (song: Song) => void;
+  jamSkipNext: () => void;
 
   /** Shared FIFO queue actions */
   jamAddToQueue: (song: Song) => void;
   jamRemoveFromQueue: (songId: string) => void;
+
+  /** Chat & Reactions */
+  sendMessage: (text: string) => void;
+  sendReaction: (emoji: string) => void;
 }
 
 const JamContext = createContext<JamContextValue | undefined>(undefined);
@@ -48,14 +57,21 @@ export function JamProvider({ children }: { children: React.ReactNode }) {
   const [isConnected, setIsConnected] = useState(false);
   const [isHost, setIsHost] = useState(false);
   const [jamQueue, setJamQueue] = useState<JamQueueEntry[]>([]);
+  const [messages, setMessages] = useState<JamChatMessage[]>([]);
+  const [reactions, setReactions] = useState<JamEmojiReaction[]>([]);
 
   const { _forceState, setIsInJam } = usePlayer();
+  const { user } = useAuth();
 
   const isHostRef = useRef(false);
+  const isInRoomRef = useRef(false);
+  const memberCountRef = useRef(0);
   const jamQueueRef = useRef<JamQueueEntry[]>([]);
   const songCacheRef = useRef<Map<string, Song>>(new Map());
 
   isHostRef.current = isHost;
+  isInRoomRef.current = isInRoom;
+  memberCountRef.current = memberCount;
   jamQueueRef.current = jamQueue;
 
   // Sync room state with player context
@@ -123,10 +139,29 @@ export function JamProvider({ children }: { children: React.ReactNode }) {
       setJamQueue(resolved);
     });
 
+    const unsubChat = syncManager.onChatMessage((msg) => {
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === msg.id)) return prev;
+        return [...prev.slice(-49), msg];
+      });
+    });
+
+    const unsubEmoji = syncManager.onEmojiReaction((reaction) => {
+      setReactions((prev) => {
+        if (prev.some((r) => r.id === reaction.id)) return prev;
+        return [...prev.slice(-19), reaction];
+      });
+      setTimeout(() => {
+        setReactions((prev) => prev.filter((r) => r.id !== reaction.id));
+      }, 3500);
+    });
+
     return () => {
       unsubSync();
       unsubCount();
       unsubQueue();
+      unsubChat();
+      unsubEmoji();
     };
   }, [_forceState]);
 
@@ -147,6 +182,8 @@ export function JamProvider({ children }: { children: React.ReactNode }) {
     setIsHost(true);
     setMemberCount(1);
     setJamQueue([]);
+    setMessages([]);
+    setReactions([]);
   }, []);
 
   const joinRoom = useCallback((code: string) => {
@@ -158,6 +195,8 @@ export function JamProvider({ children }: { children: React.ReactNode }) {
     setIsInRoom(true);
     setIsHost(false);
     setJamQueue([]);
+    setMessages([]);
+    setReactions([]);
   }, []);
 
   const leaveRoom = useCallback(() => {
@@ -167,6 +206,8 @@ export function JamProvider({ children }: { children: React.ReactNode }) {
     setIsHost(false);
     setMemberCount(0);
     setJamQueue([]);
+    setMessages([]);
+    setReactions([]);
   }, []);
 
   // Jam-aware playback controls
@@ -187,6 +228,28 @@ export function JamProvider({ children }: { children: React.ReactNode }) {
     syncManager.changeSong(song.id);
   }, []);
 
+  const jamSkipNext = useCallback(() => {
+    if (jamQueueRef.current.length > 0) {
+      const next = jamQueueRef.current[0];
+      syncManager.changeSong(next.songId);
+      syncManager.emitQueueRemove(next.songId);
+    } else {
+      syncManager.skipNext();
+    }
+  }, []);
+
+  // Auto-advance Jam Queue when current track finishes playing
+  useEffect(() => {
+    const unsubTrackEnd = audioPlayer.onTrackEnd(() => {
+      if (!isInRoomRef.current) return;
+      // Host or sole participant advances the room queue
+      if (isHostRef.current || memberCountRef.current <= 1) {
+        jamSkipNext();
+      }
+    });
+    return unsubTrackEnd;
+  }, [jamSkipNext]);
+
   // Shared Queue controls
   const jamAddToQueue = useCallback((song: Song) => {
     songCacheRef.current.set(song.id, song);
@@ -197,6 +260,52 @@ export function JamProvider({ children }: { children: React.ReactNode }) {
     syncManager.emitQueueRemove(songId);
   }, []);
 
+  const sendMessage = useCallback(
+    (text: string) => {
+      const trimmed = text.trim();
+      if (!trimmed) return;
+      const msg: JamChatMessage = {
+        id: `msg-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+        roomId: roomId || '',
+        message: trimmed,
+        user: {
+          username: user?.username || 'User',
+          tag: user?.tag,
+        },
+        timestamp: Date.now(),
+      };
+      // Optimistic instant add so sender immediately sees their message!
+      setMessages((prev) => [...prev.slice(-49), msg]);
+      syncManager.sendChatMessage(msg.message, msg.user);
+    },
+    [roomId, user]
+  );
+
+  const sendReaction = useCallback(
+    (emoji: string) => {
+      if (!emoji) return;
+      const reaction: JamEmojiReaction = {
+        id: `react-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+        roomId: roomId || '',
+        emoji,
+        user: {
+          username: user?.username || 'User',
+        },
+        timestamp: Date.now(),
+      };
+      // Optimistic instant add so sender immediately sees floating reaction!
+      setReactions((prev) => [...prev.slice(-19), reaction]);
+      setTimeout(() => {
+        setReactions((prev) => prev.filter((r) => r.id !== reaction.id));
+      }, 3500);
+
+      syncManager.sendEmojiReaction(emoji, {
+        username: user?.username || 'User',
+      });
+    },
+    [roomId, user]
+  );
+
   return (
     <JamContext.Provider
       value={{
@@ -206,6 +315,8 @@ export function JamProvider({ children }: { children: React.ReactNode }) {
         isConnected,
         isHost,
         jamQueue,
+        messages,
+        reactions,
         createRoom,
         joinRoom,
         leaveRoom,
@@ -213,8 +324,11 @@ export function JamProvider({ children }: { children: React.ReactNode }) {
         jamPause,
         jamSeek,
         jamChangeSong,
+        jamSkipNext,
         jamAddToQueue,
         jamRemoveFromQueue,
+        sendMessage,
+        sendReaction,
       }}
     >
       {children}

@@ -4,28 +4,33 @@ import {
   Text,
   TextInput,
   FlatList,
+  ScrollView,
   StyleSheet,
   TouchableOpacity,
   Animated as RNAnimated,
+  Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
-import { searchSongs } from '../services/saavn';
+import { searchSongs, getTrending, getTopSearches } from '../services/saavn';
 import { usePlayer } from '../context/PlayerContext';
 import { useJam } from '../context/JamContext';
 import { useAuth } from '../context/AuthContext';
 import { useLibrary } from '../context/LibraryContext';
 import { useQueue } from '../context/QueueContext';
+import { useToast } from '../context/ToastContext';
 import { SongCard } from '../components/SongCard';
 import { MiniPlayer } from '../components/MiniPlayer';
 import { SkeletonList } from '../components/Skeleton';
+import { TrendingCarousel } from '../components/TrendingCarousel';
 import { colors, spacing, borderRadius, typography } from '../theme';
 import type { Song } from '../types';
 
 /**
- * Home screen — greeting, search songs via JioSaavn, recently played, and library link.
+ * Home screen — greeting, search songs via JioSaavn, trending carousel,
+ * search chips, recently played, and library link.
  */
 export default function HomeScreen() {
   const [query, setQuery] = useState('');
@@ -34,11 +39,17 @@ export default function HomeScreen() {
   const [hasSearched, setHasSearched] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
 
+  // Trending / Discovery state
+  const [trendingSongs, setTrendingSongs] = useState<Song[]>([]);
+  const [searchChips, setSearchChips] = useState<string[]>([]);
+  const [isTrendingLoading, setIsTrendingLoading] = useState(true);
+
   const { playSong, currentSong, isPlaying } = usePlayer();
-  const { isInRoom, jamChangeSong } = useJam();
+  const { isInRoom, jamChangeSong, jamAddToQueue } = useJam();
   const { user } = useAuth();
   const { recentSongs } = useLibrary();
-  const { playNow } = useQueue();
+  const { playNow, addToQueue } = useQueue();
+  const { showToast } = useToast();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -47,6 +58,29 @@ export default function HomeScreen() {
   const glowAnim = useRef(new RNAnimated.Value(0)).current;
   // Empty state pulse animation
   const pulseAnim = useRef(new RNAnimated.Value(1)).current;
+
+  // Fetch trending content on mount
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setIsTrendingLoading(true);
+      try {
+        const [trending, chips] = await Promise.all([
+          getTrending(),
+          getTopSearches(),
+        ]);
+        if (!cancelled) {
+          setTrendingSongs(trending);
+          setSearchChips(chips);
+        }
+      } catch (err) {
+        console.error('[Home] Failed to load trending:', err);
+      } finally {
+        if (!cancelled) setIsTrendingLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     RNAnimated.timing(glowAnim, {
@@ -106,14 +140,35 @@ export default function HomeScreen() {
   const handleSongPress = useCallback(
     (song: Song, listContext: Song[]) => {
       if (isInRoom) {
-        // In a Jam room — route through sync manager
-        jamChangeSong(song);
+        if (currentSong) {
+          jamAddToQueue(song);
+          showToast(`Added ${song.title} to Jam Queue`, 'success');
+        } else {
+          jamChangeSong(song);
+          showToast(`Playing ${song.title}`, 'info');
+        }
       } else {
         playNow(song, listContext);
         playSong(song);
       }
     },
-    [isInRoom, jamChangeSong, playNow, playSong]
+    [isInRoom, currentSong, jamAddToQueue, jamChangeSong, playNow, playSong, showToast]
+  );
+
+  const handleAddToQueue = useCallback(
+    (song: Song) => {
+      try {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      } catch {}
+      if (isInRoom) {
+        jamAddToQueue(song);
+        showToast(`Added ${song.title} to Jam Queue`, 'success');
+      } else {
+        addToQueue(song);
+        showToast(`Added ${song.title} to queue`, 'info');
+      }
+    },
+    [isInRoom, jamAddToQueue, addToQueue, showToast]
   );
 
   const handleClear = useCallback(() => {
@@ -129,6 +184,14 @@ export default function HomeScreen() {
     router.push('/library');
   };
 
+  const handleChipPress = useCallback((chip: string) => {
+    try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } catch {}
+    setQuery(chip);
+    doSearch(chip);
+  }, [doSearch]);
+
   // Get time-based greeting
   const getGreeting = () => {
     const hour = new Date().getHours();
@@ -143,6 +206,90 @@ export default function HomeScreen() {
   });
 
   const showRecent = !hasSearched && recentSongs.length > 0;
+  const showDiscovery = !hasSearched && !isSearching;
+
+  // Discovery content: trending + chips + recently played
+  const renderDiscoveryContent = () => (
+    <ScrollView
+      style={styles.discoveryScroll}
+      contentContainerStyle={{ paddingBottom: currentSong ? 80 : spacing.lg }}
+      showsVerticalScrollIndicator={false}
+    >
+      {/* Search Chips */}
+      {searchChips.length > 0 && (
+        <View style={styles.chipsSection}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.chipsContainer}
+          >
+            {searchChips.map((chip, index) => (
+              <TouchableOpacity
+                key={`chip-${index}`}
+                style={styles.chip}
+                onPress={() => handleChipPress(chip)}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.chipText}>{chip}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+
+      {/* Trending Carousel */}
+      {isTrendingLoading ? (
+        <View style={styles.trendingPlaceholder}>
+          <View style={styles.trendingPlaceholderHeader}>
+            <Ionicons name="trending-up" size={18} color={colors.textSecondary} />
+            <Text style={[styles.recentTitle, { textTransform: 'none', fontSize: typography.sizes.lg, fontWeight: typography.weights.bold }]}>Trending Now</Text>
+          </View>
+          <View style={styles.trendingPlaceholderCards}>
+            {[1, 2, 3].map((i) => (
+              <View key={i} style={styles.trendingPlaceholderCard} />
+            ))}
+          </View>
+        </View>
+      ) : trendingSongs.length > 0 ? (
+        <TrendingCarousel
+          songs={trendingSongs}
+          onSongPress={(song) => handleSongPress(song, trendingSongs)}
+          onAddToQueue={handleAddToQueue}
+          currentSongId={currentSong?.id}
+        />
+      ) : null}
+
+      {/* Recently Played */}
+      {showRecent && (
+        <View style={styles.recentSection}>
+          <View style={styles.recentHeader}>
+            <Ionicons name="time-outline" size={16} color={colors.textSecondary} />
+            <Text style={styles.recentTitle}>Recently Played</Text>
+          </View>
+          {recentSongs.map((item, index) => (
+            <SongCard
+              key={`recent-${item.id}-${index}`}
+              song={item}
+              onPress={(song) => handleSongPress(song, recentSongs)}
+              onAddToQueue={handleAddToQueue}
+              isPlaying={currentSong?.id === item.id && isPlaying}
+            />
+          ))}
+        </View>
+      )}
+
+      {/* Empty state when no recent and no trending */}
+      {!showRecent && trendingSongs.length === 0 && !isTrendingLoading && (
+        <View style={styles.centered}>
+          <RNAnimated.View style={{ transform: [{ scale: pulseAnim }] }}>
+            <Ionicons name="musical-notes-outline" size={64} color={colors.accent} style={{ opacity: 0.3 }} />
+          </RNAnimated.View>
+          <Text style={styles.emptyTitle}>Find your vibe</Text>
+          <Text style={styles.emptyText}>Search for songs or tap a trending chip</Text>
+        </View>
+      )}
+    </ScrollView>
+  );
 
   return (
     <View style={styles.container}>
@@ -185,7 +332,7 @@ export default function HomeScreen() {
         </RNAnimated.View>
       </View>
 
-      {/* Results, Recent, Skeleton, or Empty state */}
+      {/* Results, Discovery, Skeleton */}
       {isSearching ? (
         <View style={styles.skeletonContainer}>
           <SkeletonList count={8} />
@@ -198,49 +345,20 @@ export default function HomeScreen() {
             <SongCard
               song={item}
               onPress={(song) => handleSongPress(song, results)}
+              onAddToQueue={handleAddToQueue}
               isPlaying={currentSong?.id === item.id && isPlaying}
             />
           )}
           contentContainerStyle={{ paddingBottom: currentSong ? 80 : spacing.lg }}
           showsVerticalScrollIndicator={false}
         />
-      ) : showRecent ? (
-        <View style={styles.recentSection}>
-          <View style={styles.recentHeader}>
-            <Ionicons name="time-outline" size={16} color={colors.textSecondary} />
-            <Text style={styles.recentTitle}>Recently Played</Text>
-          </View>
-          <FlatList
-            data={recentSongs}
-            keyExtractor={(item, index) => `recent-${item.id}-${index}`}
-            renderItem={({ item }) => (
-              <SongCard
-                song={item}
-                onPress={(song) => handleSongPress(song, recentSongs)}
-                isPlaying={currentSong?.id === item.id && isPlaying}
-              />
-            )}
-            contentContainerStyle={{ paddingBottom: currentSong ? 80 : spacing.lg }}
-            showsVerticalScrollIndicator={false}
-          />
+      ) : hasSearched ? (
+        <View style={styles.centered}>
+          <Ionicons name="search-outline" size={48} color={colors.textSecondary} style={{ opacity: 0.5 }} />
+          <Text style={styles.emptyText}>No results found</Text>
         </View>
       ) : (
-        <View style={styles.centered}>
-          {hasSearched ? (
-            <>
-              <Ionicons name="search-outline" size={48} color={colors.textSecondary} style={{ opacity: 0.5 }} />
-              <Text style={styles.emptyText}>No results found</Text>
-            </>
-          ) : (
-            <>
-              <RNAnimated.View style={{ transform: [{ scale: pulseAnim }] }}>
-                <Ionicons name="musical-notes-outline" size={64} color={colors.accent} style={{ opacity: 0.3 }} />
-              </RNAnimated.View>
-              <Text style={styles.emptyTitle}>Find your vibe</Text>
-              <Text style={styles.emptyText}>Search for songs to start listening</Text>
-            </>
-          )}
-        </View>
+        renderDiscoveryContent()
       )}
 
       {/* Mini player */}
@@ -309,8 +427,52 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: spacing.lg,
   },
-  recentSection: {
+  discoveryScroll: {
     flex: 1,
+  },
+  chipsSection: {
+    marginBottom: spacing.lg,
+  },
+  chipsContainer: {
+    paddingHorizontal: spacing.lg,
+    gap: spacing.sm,
+  },
+  chip: {
+    backgroundColor: colors.backgroundElevated,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm + 2,
+    borderRadius: borderRadius.full,
+    borderWidth: 1,
+    borderColor: colors.divider,
+  },
+  chipText: {
+    fontSize: typography.sizes.sm,
+    fontWeight: typography.weights.medium,
+    color: colors.textPrimary,
+  },
+  trendingPlaceholder: {
+    marginBottom: spacing.lg,
+  },
+  trendingPlaceholderHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    marginBottom: spacing.md,
+  },
+  trendingPlaceholderCards: {
+    flexDirection: 'row',
+    paddingHorizontal: spacing.lg,
+    gap: spacing.md,
+  },
+  trendingPlaceholderCard: {
+    width: Dimensions.get('window').width * 0.42,
+    height: Dimensions.get('window').width * 0.42 * 1.25,
+    borderRadius: borderRadius.lg,
+    backgroundColor: colors.backgroundElevated,
+  },
+  recentSection: {
+    marginTop: spacing.sm,
   },
   recentHeader: {
     flexDirection: 'row',
@@ -332,6 +494,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: spacing.xxl,
+    minHeight: 200,
   },
   emptyTitle: {
     fontSize: typography.sizes.xl,

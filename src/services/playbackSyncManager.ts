@@ -1,27 +1,17 @@
 import { io, Socket } from 'socket.io-client';
 import { CONFIG } from '../config';
 import { audioPlayer } from './audioPlayer';
-import type { SyncState, PlaybackAction, JamQueueState } from '../types';
+import type { SyncState, PlaybackAction, JamQueueState, JamChatMessage, JamEmojiReaction } from '../types';
 
 type SyncStateCallback = (state: SyncState) => void;
 type MemberCountCallback = (count: number) => void;
 type QueueStateCallback = (state: JamQueueState) => void;
+type ChatMessageCallback = (msg: JamChatMessage) => void;
+type EmojiReactionCallback = (reaction: JamEmojiReaction) => void;
 
 /**
  * PlaybackSyncManager — owns the Socket.io connection to the Jam sync server.
  * Keeps UI components decoupled from raw socket logic.
- *
- * Server contract:
- *   Client emits:
- *     - "join-room" (roomId)
- *     - "playback-action" ({ roomId, action })
- *     - "request-resync" (roomId)
- *     - "queue-add" ({ roomId, songId })
- *     - "queue-remove" ({ roomId, songId })
- *   Server emits:
- *     - "sync-state" ({ songId, isPlaying, positionMs, serverTime })
- *     - "member-count" (count)
- *     - "queue-state" ({ roomId, entries: Array<{ songId, addedBy }> })
  */
 class PlaybackSyncManager {
   private socket: Socket | null = null;
@@ -30,6 +20,8 @@ class PlaybackSyncManager {
   private syncStateCallbacks: Set<SyncStateCallback> = new Set();
   private memberCountCallbacks: Set<MemberCountCallback> = new Set();
   private queueStateCallbacks: Set<QueueStateCallback> = new Set();
+  private chatMessageCallbacks: Set<ChatMessageCallback> = new Set();
+  private emojiReactionCallbacks: Set<EmojiReactionCallback> = new Set();
 
   /**
    * Connect to the sync server.
@@ -62,6 +54,14 @@ class PlaybackSyncManager {
 
     this.socket.on('queue-state', (state: JamQueueState) => {
       this.queueStateCallbacks.forEach((cb) => cb(state));
+    });
+
+    this.socket.on('chat-message', (msg: JamChatMessage) => {
+      this.chatMessageCallbacks.forEach((cb) => cb(msg));
+    });
+
+    this.socket.on('emoji-reaction', (reaction: JamEmojiReaction) => {
+      this.emojiReactionCallbacks.forEach((cb) => cb(reaction));
     });
 
     this.socket.on('disconnect', () => {
@@ -139,6 +139,13 @@ class PlaybackSyncManager {
   }
 
   /**
+   * Emit a skip-next action to the room.
+   */
+  skipNext(): void {
+    this.emitAction({ type: 'skip-next' });
+  }
+
+  /**
    * Subscribe to sync-state events.
    * Returns an unsubscribe function.
    */
@@ -185,6 +192,46 @@ class PlaybackSyncManager {
       roomId: this.currentRoomId,
       songId,
     });
+  }
+
+  /**
+   * Send a real-time chat message to the room.
+   */
+  sendChatMessage(message: string, user: { username: string; tag?: string }): void {
+    if (!this.socket || !this.currentRoomId) return;
+    this.socket.emit('chat-message', {
+      roomId: this.currentRoomId,
+      message,
+      user,
+    });
+  }
+
+  /**
+   * Send an emoji reaction to the room.
+   */
+  sendEmojiReaction(emoji: string, user: { username: string }): void {
+    if (!this.socket || !this.currentRoomId) return;
+    this.socket.emit('emoji-reaction', {
+      roomId: this.currentRoomId,
+      emoji,
+      user,
+    });
+  }
+
+  /**
+   * Subscribe to incoming room chat messages.
+   */
+  onChatMessage(cb: ChatMessageCallback): () => void {
+    this.chatMessageCallbacks.add(cb);
+    return () => this.chatMessageCallbacks.delete(cb);
+  }
+
+  /**
+   * Subscribe to incoming room emoji reactions.
+   */
+  onEmojiReaction(cb: EmojiReactionCallback): () => void {
+    this.emojiReactionCallbacks.add(cb);
+    return () => this.emojiReactionCallbacks.delete(cb);
   }
 
   /**

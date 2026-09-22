@@ -1,12 +1,21 @@
 import React from 'react';
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Platform } from 'react-native';
 import { colors, typography } from '../../theme';
 
 /**
  * Tab layout — Home, Friends, Jam tabs with dark/lavender styling.
  */
 export default function TabLayout() {
+  const insets = useSafeAreaInsets();
+  // Android 3-button navigation bar is ~48dp.
+  // We ensure at least 48dp on Android so tab buttons (Home, Friends, Jam, Profile)
+  // are never obscured by the system navigation bar or gesture bar.
+  const bottomInset = Math.max(insets.bottom, Platform.OS === 'android' ? 48 : 8);
+  const barHeight = 56 + bottomInset;
+
   return (
     <Tabs
       screenOptions={{
@@ -24,9 +33,9 @@ export default function TabLayout() {
           backgroundColor: colors.backgroundElevated,
           borderTopColor: colors.divider,
           borderTopWidth: 0.5,
-          height: 60,
-          paddingBottom: 8,
-          paddingTop: 4,
+          height: barHeight,
+          paddingBottom: bottomInset + 4,
+          paddingTop: 6,
         },
         tabBarActiveTintColor: colors.accent,
         tabBarInactiveTintColor: colors.textSecondary,

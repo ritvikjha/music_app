@@ -10,6 +10,7 @@ import {
 import * as Clipboard from 'expo-clipboard';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
+import * as Updates from 'expo-updates';
 import { useAuth } from '../context/AuthContext';
 import { MiniPlayer } from '../components/MiniPlayer';
 import { GlowCard } from '../components/GlowCard';
@@ -29,6 +30,7 @@ export default function ProfileScreen() {
   const { user, fullTag, logout } = useAuth();
   const [stats, setStats] = useState<ListeningStats>({ songsPlayed: 0, totalMinutes: 0 });
   const [copied, setCopied] = useState(false);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -58,6 +60,42 @@ export default function ProfileScreen() {
         onPress: logout,
       },
     ]);
+  };
+
+  const handleCheckUpdates = async () => {
+    if (!Updates.isEnabled) {
+      Alert.alert(
+        'Development Mode',
+        'Over-The-Air updates are only active in installed APK/production builds.'
+      );
+      return;
+    }
+
+    setCheckingUpdate(true);
+    try {
+      const update = await Updates.checkForUpdateAsync();
+      if (update.isAvailable) {
+        await Updates.fetchUpdateAsync();
+        Alert.alert(
+          'Update Downloaded!',
+          'A new version of Jam has been downloaded. Restart the app to apply changes immediately without reinstalling.',
+          [
+            { text: 'Later', style: 'cancel' },
+            {
+              text: 'Restart Now',
+              style: 'default',
+              onPress: () => Updates.reloadAsync(),
+            },
+          ]
+        );
+      } else {
+        Alert.alert('Up to Date', 'You are on the latest version of Jam!');
+      }
+    } catch (error) {
+      Alert.alert('Update Check', 'Could not check for updates: ' + (error as Error).message);
+    } finally {
+      setCheckingUpdate(false);
+    }
   };
 
   const initial = user?.username?.charAt(0).toUpperCase() ?? '?';
@@ -122,6 +160,19 @@ export default function ProfileScreen() {
             <Ionicons name="volume-medium-outline" size={20} color={colors.textSecondary} />
             <Text style={styles.settingsText}>Audio Quality</Text>
             <Ionicons name="chevron-forward" size={18} color={colors.textSecondary} />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.settingsItem}
+            activeOpacity={0.7}
+            onPress={handleCheckUpdates}
+            disabled={checkingUpdate}
+          >
+            <Ionicons name="cloud-download-outline" size={20} color={colors.accent} />
+            <Text style={[styles.settingsText, { color: colors.accent, fontWeight: '600' }]}>
+              {checkingUpdate ? 'Checking for updates...' : 'Check for Updates'}
+            </Text>
+            <Ionicons name="chevron-forward" size={18} color={colors.accent} />
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.settingsItem} activeOpacity={0.7}>

@@ -171,3 +171,106 @@ export async function getSongById(id: string): Promise<Song | null> {
     return null;
   }
 }
+
+/**
+ * Fetch trending songs from JioSaavn.
+ * Uses the search API with popular queries as a reliable fallback.
+ */
+export async function getTrending(): Promise<Song[]> {
+  try {
+    // JioSaavn's trending content endpoint
+    const url = `https://www.jiosaavn.com/api.php?__call=content.getTrending&api_version=4&_format=json&_marker=0&cc=in&type=song&n=20`;
+
+    const response = await fetch(url, {
+      headers: {
+        Accept: 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Trending fetch failed with status ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    // The response can vary — try common shapes
+    let rawItems: RawJioSaavnSong[] = [];
+    if (Array.isArray(data)) {
+      rawItems = data;
+    } else if (data.results && Array.isArray(data.results)) {
+      rawItems = data.results;
+    } else if (data.data && Array.isArray(data.data)) {
+      rawItems = data.data;
+    } else {
+      // Extract song-like items from any nested structure
+      const values = Object.values(data);
+      for (const val of values) {
+        if (Array.isArray(val) && val.length > 0 && val[0]?.id) {
+          rawItems = val as RawJioSaavnSong[];
+          break;
+        }
+      }
+    }
+
+    const songs = rawItems
+      .map(mapRawToSong)
+      .filter((s) => Boolean(s.streamUrl));
+
+    if (songs.length > 0) return songs;
+
+    // Fallback: search for a popular query to simulate trending
+    return searchSongs('trending hits 2025');
+  } catch (error) {
+    console.error('[Saavn] getTrending error:', error);
+    // Fallback on any error
+    try {
+      return await searchSongs('trending hits 2025');
+    } catch {
+      return [];
+    }
+  }
+}
+
+/**
+ * Fetch top search suggestions from JioSaavn.
+ * Returns a list of trending search terms.
+ */
+export async function getTopSearches(): Promise<string[]> {
+  try {
+    const url = `https://www.jiosaavn.com/api.php?__call=content.getTopSearches&api_version=4&_format=json&_marker=0&cc=in`;
+
+    const response = await fetch(url, {
+      headers: {
+        Accept: 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+      },
+    });
+
+    if (!response.ok) return getDefaultSearchChips();
+
+    const data = await response.json();
+
+    // Extract search terms from the response
+    let terms: string[] = [];
+    if (Array.isArray(data)) {
+      terms = data
+        .filter((item: any) => item?.title || item?.name)
+        .map((item: any) => unescapeHtml(item.title || item.name))
+        .slice(0, 10);
+    }
+
+    return terms.length > 0 ? terms : getDefaultSearchChips();
+  } catch (error) {
+    console.error('[Saavn] getTopSearches error:', error);
+    return getDefaultSearchChips();
+  }
+}
+
+function getDefaultSearchChips(): string[] {
+  return [
+    'Arijit Singh', 'Diljit Dosanjh', 'AP Dhillon',
+    'Shreya Ghoshal', 'Bollywood Hits', 'Punjabi Hits',
+    'Love Songs', 'Party Songs', 'Sad Songs', 'English Pop',
+  ];
+}

@@ -10,6 +10,7 @@ interface SongCardProps {
   song: Song;
   onPress: (song: Song) => void;
   onAddToQueue?: (song: Song) => void;
+  onLongPress?: (song: Song) => void;
   isPlaying?: boolean;
 }
 
@@ -25,7 +26,7 @@ function formatDuration(seconds: number): string {
 /**
  * Horizontal song card with press animation, equalizer indicator, and optional queue action.
  */
-export function SongCard({ song, onPress, onAddToQueue, isPlaying }: SongCardProps) {
+export function SongCard({ song, onPress, onAddToQueue, onLongPress, isPlaying }: SongCardProps) {
   const scaleAnim = useRef(new RNAnimated.Value(1)).current;
 
   const onPressIn = () => {
@@ -64,6 +65,12 @@ export function SongCard({ song, onPress, onAddToQueue, isPlaying }: SongCardPro
       <TouchableOpacity
         style={[styles.container, isPlaying && styles.containerActive]}
         onPress={handlePress}
+        onLongPress={onLongPress ? () => {
+          try {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+          } catch {}
+          onLongPress(song);
+        } : undefined}
         onPressIn={onPressIn}
         onPressOut={onPressOut}
         activeOpacity={0.85}

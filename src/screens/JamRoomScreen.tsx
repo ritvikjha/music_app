@@ -40,16 +40,24 @@ export default function JamRoomScreen() {
     memberCount,
     isConnected,
     jamQueue,
+    messages,
+    reactions,
     createRoom,
     joinRoom,
     leaveRoom,
     jamChangeSong,
     jamAddToQueue,
     jamRemoveFromQueue,
+    sendMessage,
+    sendReaction,
   } = useJam();
-  const { playSong, currentSong, isPlaying } = usePlayer();
+  const { currentSong, isPlaying } = usePlayer();
   const { user } = useAuth();
   const { showToast } = useToast();
+
+  // Tab: queue vs chat
+  const [jamTab, setJamTab] = useState<'queue' | 'chat'>('queue');
+  const [chatInput, setChatInput] = useState('');
 
   // Join room input
   const [joinCode, setJoinCode] = useState('');
@@ -142,12 +150,11 @@ export default function JamRoomScreen() {
   const handleSongPlayNow = useCallback(
     (song: Song) => {
       jamChangeSong(song);
-      playSong(song);
       setSearchResults([]);
       setSearchQuery('');
       showToast(`Playing ${song.title}`, 'info');
     },
-    [jamChangeSong, playSong, showToast]
+    [jamChangeSong, showToast]
   );
 
   const handleAddToJamQueue = useCallback(
@@ -159,6 +166,19 @@ export default function JamRoomScreen() {
       showToast(`Added ${song.title} to Jam Queue`, 'success');
     },
     [jamAddToQueue, showToast]
+  );
+
+  const handleSongSelect = useCallback(
+    (song: Song) => {
+      if (currentSong) {
+        // Music is already playing in the room — queue it so current song is not interrupted
+        handleAddToJamQueue(song);
+      } else {
+        // Room is silent — start playback immediately
+        handleSongPlayNow(song);
+      }
+    },
+    [currentSong, handleAddToJamQueue, handleSongPlayNow]
   );
 
   const handleRemoveFromJamQueue = useCallback(
@@ -185,6 +205,23 @@ export default function JamRoomScreen() {
       },
     ]);
   }, [leaveRoom, showToast]);
+
+  const handleSendChat = () => {
+    if (!chatInput.trim()) return;
+    try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } catch {}
+    sendMessage(chatInput.trim());
+    setChatInput('');
+  };
+
+  const handleSendReaction = (emoji: string) => {
+    try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    } catch {}
+    sendReaction(emoji);
+    showToast(`Reacted ${emoji}`, 'info');
+  };
 
   const currentUsername = user?.username ?? '';
 
@@ -255,6 +292,18 @@ export default function JamRoomScreen() {
   // ─── In a room ─────────────────────────────────────────────────────────────
   return (
     <View style={styles.container}>
+      {/* Floating Active Reactions (overlay on top of room UI) */}
+      {reactions.length > 0 && (
+        <View style={styles.floatingReactionsOverlay} pointerEvents="none">
+          {reactions.slice(-4).map((r) => (
+            <View key={r.id} style={styles.floatingReactionBadge}>
+              <Text style={styles.floatingReactionEmoji}>{r.emoji}</Text>
+              <Text style={styles.floatingReactionUser}>{r.user.username}</Text>
+            </View>
+          ))}
+        </View>
+      )}
+
       <ScrollView
         style={styles.scrollArea}
         contentContainerStyle={styles.scrollContent}
@@ -326,104 +375,219 @@ export default function JamRoomScreen() {
           </View>
         </GlowCard>
 
-        {/* Up Next FIFO Shared Queue Section */}
-        <View style={styles.queueSection}>
-          <View style={styles.queueHeader}>
-            <Ionicons name="list" size={16} color={colors.accent} />
-            <Text style={styles.queueTitle}>
-              Up Next · {jamQueue.length} {jamQueue.length === 1 ? 'song' : 'songs'}
-            </Text>
-          </View>
-
-          {jamQueue.length === 0 ? (
-            <View style={styles.emptyQueueCard}>
-              <Text style={styles.emptyQueueText}>
-                No upcoming songs. Search and add tracks to the shared queue below!
-              </Text>
-            </View>
-          ) : (
-            <View style={styles.queueList}>
-              {jamQueue.map((entry, index) => {
-                const isOwn =
-                  entry.addedBy === currentUsername ||
-                  entry.addedBy?.startsWith(currentUsername) ||
-                  !entry.addedBy;
-
-                return (
-                  <View key={`jam-q-${entry.songId}-${index}`} style={styles.queueItem}>
-                    {entry.song?.imageUrl ? (
-                      <Image source={{ uri: entry.song.imageUrl }} style={styles.queueThumb} />
-                    ) : (
-                      <View style={styles.queueThumbFallback}>
-                        <Ionicons name="musical-note" size={18} color={colors.accent} />
-                      </View>
-                    )}
-                    <View style={styles.queueInfo}>
-                      <Text style={styles.queueItemTitle} numberOfLines={1}>
-                        {entry.song?.title || 'Loading song...'}
-                      </Text>
-                      <Text style={styles.queueItemSubtitle} numberOfLines={1}>
-                        {entry.song?.artist || 'JioSaavn'} • Added by {entry.addedBy || 'Jammer'}
-                      </Text>
-                    </View>
-
-                    {isOwn && (
-                      <TouchableOpacity
-                        onPress={() => handleRemoveFromJamQueue(entry.songId, entry.song?.title)}
-                        style={styles.queueRemoveBtn}
-                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                      >
-                        <Ionicons name="close-circle-outline" size={20} color={colors.textSecondary} />
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                );
-              })}
-            </View>
-          )}
+        {/* Quick Emoji Reaction Bar */}
+        <View style={styles.reactionBar}>
+          {['🔥', '❤️', '🎵', '💃', '👏', '🥳'].map((emoji) => (
+            <TouchableOpacity
+              key={emoji}
+              style={styles.reactionPill}
+              activeOpacity={0.7}
+              onPress={() => handleSendReaction(emoji)}
+            >
+              <Text style={styles.reactionEmoji}>{emoji}</Text>
+            </TouchableOpacity>
+          ))}
         </View>
 
-        {/* Search songs to queue in room */}
-        <View style={styles.roomSearch}>
-          <Text style={styles.searchSectionTitle}>Add Songs to Jam</Text>
-          <View style={styles.searchBar}>
-            <Ionicons name="search" size={16} color={colors.textSecondary} />
-            <TextInput
-              style={styles.searchInput}
-              placeholder="Search to play or queue..."
-              placeholderTextColor={colors.textSecondary}
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-              returnKeyType="search"
-              onSubmitEditing={handleSearch}
+        {/* Segmented Control: Queue vs Chat */}
+        <View style={styles.segmentedControl}>
+          <TouchableOpacity
+            style={[styles.segmentBtn, jamTab === 'queue' && styles.segmentBtnActive]}
+            onPress={() => setJamTab('queue')}
+          >
+            <Ionicons
+              name="list"
+              size={16}
+              color={jamTab === 'queue' ? colors.accent : colors.textSecondary}
             />
-            {searchQuery.length > 0 && (
-              <TouchableOpacity onPress={() => setSearchQuery('')}>
-                <Ionicons name="close-circle" size={16} color={colors.textSecondary} />
-              </TouchableOpacity>
-            )}
-          </View>
+            <Text style={[styles.segmentText, jamTab === 'queue' && styles.segmentTextActive]}>
+              Queue ({jamQueue.length})
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.segmentBtn, jamTab === 'chat' && styles.segmentBtnActive]}
+            onPress={() => setJamTab('chat')}
+          >
+            <Ionicons
+              name="chatbubbles"
+              size={16}
+              color={jamTab === 'chat' ? colors.accent : colors.textSecondary}
+            />
+            <Text style={[styles.segmentText, jamTab === 'chat' && styles.segmentTextActive]}>
+              Chat {messages.length > 0 && `(${messages.length})`}
+            </Text>
+          </TouchableOpacity>
         </View>
 
-        {/* Search results or skeleton loading */}
-        {isSearching ? (
-          <View style={styles.searchResultsSkeleton}>
-            <SkeletonList count={5} />
-          </View>
-        ) : searchResults.length > 0 ? (
-          <View style={styles.searchResultsContainer}>
-            <Text style={styles.resultsHeaderHint}>Tap to play now or tap + to queue</Text>
-            {searchResults.map((item) => (
-              <SongCard
-                key={`inroom-search-${item.id}`}
-                song={item}
-                onPress={handleSongPlayNow}
-                onAddToQueue={handleAddToJamQueue}
-                isPlaying={currentSong?.id === item.id}
+        {jamTab === 'chat' ? (
+          /* Live Chat Section */
+          <View style={styles.chatSection}>
+            <View style={styles.chatMessagesList}>
+              {messages.length === 0 ? (
+                <View style={styles.emptyChatCard}>
+                  <Ionicons name="chatbubbles-outline" size={36} color={colors.accentAlpha25} />
+                  <Text style={styles.emptyChatTitle}>No messages yet</Text>
+                  <Text style={styles.emptyChatDesc}>
+                    Say hi or react to songs with the listening squad!
+                  </Text>
+                </View>
+              ) : (
+                messages.map((msg) => {
+                  const isMe = msg.user.username === currentUsername;
+                  return (
+                    <View
+                      key={msg.id}
+                      style={[styles.chatBubbleContainer, isMe && styles.chatBubbleRight]}
+                    >
+                      {!isMe && (
+                        <View style={styles.chatAvatar}>
+                          <Text style={styles.chatAvatarText}>
+                            {msg.user.username.charAt(0).toUpperCase()}
+                          </Text>
+                        </View>
+                      )}
+                      <View style={[styles.chatBubble, isMe ? styles.chatBubbleMe : styles.chatBubbleOther]}>
+                        {!isMe && (
+                          <Text style={styles.chatSender}>{msg.user.username}</Text>
+                        )}
+                        <Text style={[styles.chatMessageText, isMe && styles.chatMessageTextMe]}>
+                          {msg.message}
+                        </Text>
+                      </View>
+                    </View>
+                  );
+                })
+              )}
+            </View>
+
+            {/* Chat Input */}
+            <View style={styles.chatInputRow}>
+              <TextInput
+                style={styles.chatTextInput}
+                placeholder="Say something to room..."
+                placeholderTextColor={colors.textSecondary}
+                value={chatInput}
+                onChangeText={setChatInput}
+                returnKeyType="send"
+                onSubmitEditing={handleSendChat}
               />
-            ))}
+              <TouchableOpacity
+                style={[styles.chatSendBtn, !chatInput.trim() && { opacity: 0.5 }]}
+                disabled={!chatInput.trim()}
+                onPress={handleSendChat}
+              >
+                <Ionicons name="send" size={16} color={colors.background} />
+              </TouchableOpacity>
+            </View>
           </View>
-        ) : null}
+        ) : (
+          /* Queue Section & Search to Queue */
+          <>
+            <View style={styles.queueSection}>
+              <View style={styles.queueHeader}>
+                <Ionicons name="list" size={16} color={colors.accent} />
+                <Text style={styles.queueTitle}>
+                  Up Next · {jamQueue.length} {jamQueue.length === 1 ? 'song' : 'songs'}
+                </Text>
+              </View>
+
+              {jamQueue.length === 0 ? (
+                <View style={styles.emptyQueueCard}>
+                  <Text style={styles.emptyQueueText}>
+                    No upcoming songs. Search and add tracks to the shared queue below!
+                  </Text>
+                </View>
+              ) : (
+                <View style={styles.queueList}>
+                  {jamQueue.map((entry, index) => {
+                    const isOwn =
+                      entry.addedBy === currentUsername ||
+                      entry.addedBy?.startsWith(currentUsername) ||
+                      !entry.addedBy;
+
+                    return (
+                      <View key={`jam-q-${entry.songId}-${index}`} style={styles.queueItem}>
+                        {entry.song?.imageUrl ? (
+                          <Image source={{ uri: entry.song.imageUrl }} style={styles.queueThumb} />
+                        ) : (
+                          <View style={styles.queueThumbFallback}>
+                            <Ionicons name="musical-note" size={18} color={colors.accent} />
+                          </View>
+                        )}
+                        <View style={styles.queueInfo}>
+                          <Text style={styles.queueItemTitle} numberOfLines={1}>
+                            {entry.song?.title || 'Loading song...'}
+                          </Text>
+                          <Text style={styles.queueItemSubtitle} numberOfLines={1}>
+                            {entry.song?.artist || 'JioSaavn'} • Added by {entry.addedBy || 'Jammer'}
+                          </Text>
+                        </View>
+
+                        {isOwn && (
+                          <TouchableOpacity
+                            onPress={() => handleRemoveFromJamQueue(entry.songId, entry.song?.title)}
+                            style={styles.queueRemoveBtn}
+                            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                          >
+                            <Ionicons name="close-circle-outline" size={20} color={colors.textSecondary} />
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                    );
+                  })}
+                </View>
+              )}
+            </View>
+
+            {/* Search songs to queue in room */}
+            <View style={styles.roomSearch}>
+              <Text style={styles.searchSectionTitle}>Add Songs to Jam</Text>
+              <View style={styles.searchBar}>
+                <Ionicons name="search" size={16} color={colors.textSecondary} />
+                <TextInput
+                  style={styles.searchInput}
+                  placeholder="Search to play or queue..."
+                  placeholderTextColor={colors.textSecondary}
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                  returnKeyType="search"
+                  onSubmitEditing={handleSearch}
+                />
+                {searchQuery.length > 0 && (
+                  <TouchableOpacity onPress={() => setSearchQuery('')}>
+                    <Ionicons name="close-circle" size={16} color={colors.textSecondary} />
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+
+            {/* Search results or skeleton loading */}
+            {isSearching ? (
+              <View style={styles.searchResultsSkeleton}>
+                <SkeletonList count={5} />
+              </View>
+            ) : searchResults.length > 0 ? (
+              <View style={styles.searchResultsContainer}>
+                <Text style={styles.resultsHeaderHint}>
+                  {currentSong
+                    ? 'Tap song to add to Jam Queue · Long-press to play now'
+                    : 'Tap song to play'}
+                </Text>
+                {searchResults.map((item) => (
+                  <SongCard
+                    key={`inroom-search-${item.id}`}
+                    song={item}
+                    onPress={handleSongSelect}
+                    onLongPress={handleSongPlayNow}
+                    onAddToQueue={handleAddToJamQueue}
+                    isPlaying={currentSong?.id === item.id}
+                  />
+                ))}
+              </View>
+            ) : null}
+          </>
+        )}
 
         {/* Leave button */}
         <View style={styles.leaveContainer}>
@@ -782,5 +946,202 @@ const styles = StyleSheet.create({
     fontSize: typography.sizes.md,
     fontWeight: typography.weights.semibold,
     color: colors.error,
+  },
+
+  // ─── Reactions & Chat Styles ───────────────────────────────────────────────
+  reactionBar: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    marginTop: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  reactionPill: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: colors.backgroundElevated,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.accentAlpha25,
+  },
+  reactionEmoji: {
+    fontSize: 20,
+  },
+  floatingReactionsOverlay: {
+    position: 'absolute',
+    top: 20,
+    right: 16,
+    zIndex: 9999,
+    elevation: 30,
+    gap: 6,
+  },
+  floatingReactionBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(22, 21, 28, 0.92)',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: borderRadius.full,
+    borderWidth: 1,
+    borderColor: colors.accent,
+    gap: 6,
+    shadowColor: colors.accent,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  floatingReactionEmoji: {
+    fontSize: 16,
+  },
+  floatingReactionUser: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.accent,
+  },
+  segmentedControl: {
+    flexDirection: 'row',
+    marginHorizontal: spacing.lg,
+    marginVertical: spacing.md,
+    backgroundColor: colors.backgroundInput,
+    borderRadius: borderRadius.md,
+    padding: 3,
+    borderWidth: 1,
+    borderColor: colors.divider,
+  },
+  segmentBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: spacing.sm,
+    borderRadius: borderRadius.sm,
+    gap: 6,
+  },
+  segmentBtnActive: {
+    backgroundColor: colors.backgroundElevated,
+    borderWidth: 1,
+    borderColor: colors.accentAlpha25,
+  },
+  segmentText: {
+    fontSize: typography.sizes.sm,
+    fontWeight: typography.weights.medium,
+    color: colors.textSecondary,
+  },
+  segmentTextActive: {
+    color: colors.accent,
+    fontWeight: typography.weights.bold,
+  },
+  chatSection: {
+    paddingHorizontal: spacing.lg,
+    marginBottom: spacing.xl,
+  },
+  chatMessagesList: {
+    minHeight: 180,
+    marginBottom: spacing.md,
+    gap: spacing.sm,
+  },
+  emptyChatCard: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: spacing.xxl,
+    backgroundColor: colors.backgroundElevated,
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: colors.divider,
+  },
+  emptyChatTitle: {
+    fontSize: typography.sizes.md,
+    fontWeight: typography.weights.semibold,
+    color: colors.textPrimary,
+    marginTop: spacing.sm,
+    marginBottom: 4,
+  },
+  emptyChatDesc: {
+    fontSize: typography.sizes.xs,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    paddingHorizontal: spacing.xl,
+  },
+  chatBubbleContainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: spacing.xs,
+    marginVertical: 2,
+  },
+  chatBubbleRight: {
+    justifyContent: 'flex-end',
+  },
+  chatAvatar: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: colors.accentAlpha25,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  chatAvatarText: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: colors.accent,
+  },
+  chatBubble: {
+    maxWidth: '75%',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: borderRadius.md,
+  },
+  chatBubbleMe: {
+    backgroundColor: colors.accent,
+    borderBottomRightRadius: 2,
+  },
+  chatBubbleOther: {
+    backgroundColor: colors.backgroundElevated,
+    borderBottomLeftRadius: 2,
+    borderWidth: 1,
+    borderColor: colors.divider,
+  },
+  chatSender: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: colors.accent,
+    marginBottom: 2,
+  },
+  chatMessageText: {
+    fontSize: typography.sizes.sm,
+    color: colors.textPrimary,
+    lineHeight: 18,
+  },
+  chatMessageTextMe: {
+    color: colors.background,
+    fontWeight: '500',
+  },
+  chatInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.backgroundElevated,
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: colors.accentAlpha25,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 4,
+    gap: spacing.sm,
+  },
+  chatTextInput: {
+    flex: 1,
+    color: colors.textPrimary,
+    fontSize: typography.sizes.sm,
+    paddingVertical: spacing.sm,
+  },
+  chatSendBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: colors.accent,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });

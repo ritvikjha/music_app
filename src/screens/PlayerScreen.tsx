@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   StyleSheet,
   Dimensions,
+  Share,
   Animated as RNAnimated,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -17,8 +18,12 @@ import { usePlayer } from '../context/PlayerContext';
 import { useJam } from '../context/JamContext';
 import { useQueue } from '../context/QueueContext';
 import { useLibrary } from '../context/LibraryContext';
+import { useSleepTimer } from '../context/SleepTimerContext';
 import { ProgressBar } from '../components/ProgressBar';
 import { AvatarRow } from '../components/AvatarRow';
+import { SleepTimerModal } from '../components/SleepTimerModal';
+import { QueueModal } from '../components/QueueModal';
+import { LyricsModal } from '../components/LyricsModal';
 import { extractDominantColor, DEFAULT_DOMINANT_COLOR, RGBColor } from '../services/albumColors';
 import { colors, spacing, borderRadius, typography, shadows } from '../theme';
 
@@ -39,10 +44,16 @@ export default function PlayerScreen() {
     skipNext,
     skipPrevious,
   } = usePlayer();
-  const { isInRoom, memberCount, jamPlay, jamPause, jamSeek } = useJam();
-  const { shuffle, repeatMode, toggleShuffle, cycleRepeatMode } = useQueue();
+  const { isInRoom, memberCount, jamPlay, jamPause, jamSeek, jamSkipNext } = useJam();
+  const { shuffle, repeatMode, toggleShuffle, cycleRepeatMode, upcomingQueue } = useQueue();
   const { isLiked: checkIsLiked, toggleLike } = useLibrary();
+  const { isActive: sleepTimerActive } = useSleepTimer();
   const router = useRouter();
+
+  // Modals state
+  const [showSleepTimer, setShowSleepTimer] = useState(false);
+  const [showQueue, setShowQueue] = useState(false);
+  const [showLyrics, setShowLyrics] = useState(false);
 
   // Dominant artwork color
   const [artColor, setArtColor] = useState<RGBColor>(DEFAULT_DOMINANT_COLOR);
@@ -128,7 +139,9 @@ export default function PlayerScreen() {
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     } catch {}
-    if (!isInRoom) {
+    if (isInRoom) {
+      jamSkipNext();
+    } else {
       skipNext();
     }
   };
@@ -141,6 +154,19 @@ export default function PlayerScreen() {
       jamSeek(0);
     } else {
       skipPrevious();
+    }
+  };
+
+  const handleShare = async () => {
+    if (!currentSong) return;
+    try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      await Share.share({
+        message: `Listening to "${currentSong.title}" by ${currentSong.artist} on Jam! 🎵\n\nListen along on Jam Music: ${currentSong.streamUrl || 'https://www.jiosaavn.com'}`,
+        title: currentSong.title,
+      });
+    } catch (err) {
+      console.warn('[PlayerScreen] Share error:', err);
     }
   };
 
@@ -213,7 +239,18 @@ export default function PlayerScreen() {
             <Text style={styles.headerTitle}>Now Playing</Text>
           )}
         </View>
-        <View style={{ width: 44 }} />
+        <TouchableOpacity
+          style={styles.sleepTimerButton}
+          onPress={() => setShowSleepTimer(true)}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        >
+          <Ionicons
+            name={sleepTimerActive ? 'moon' : 'moon-outline'}
+            size={22}
+            color={sleepTimerActive ? colors.accent : colors.textSecondary}
+          />
+          {sleepTimerActive && <View style={styles.sleepTimerDot} />}
+        </TouchableOpacity>
       </View>
 
       {/* Album art with pulse animation and dynamic glow */}
@@ -302,9 +339,8 @@ export default function PlayerScreen() {
 
         {/* Next */}
         <TouchableOpacity
-          style={[styles.controlButton, isInRoom && { opacity: 0.4 }]}
+          style={styles.controlButton}
           onPress={handleSkipNext}
-          disabled={isInRoom}
         >
           <Ionicons name="play-skip-forward" size={28} color={colors.textPrimary} />
         </TouchableOpacity>
@@ -330,6 +366,41 @@ export default function PlayerScreen() {
         </TouchableOpacity>
       </View>
 
+      {/* Action Row: Lyrics, Share, Queue */}
+      <View style={styles.actionRow}>
+        <TouchableOpacity
+          style={styles.actionPill}
+          onPress={() => setShowLyrics(true)}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="mic-outline" size={17} color={colors.accent} />
+          <Text style={styles.actionPillText}>Lyrics</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.actionPill}
+          onPress={handleShare}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="share-social-outline" size={17} color={colors.textPrimary} />
+          <Text style={styles.actionPillText}>Share</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.actionPill}
+          onPress={() => setShowQueue(true)}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="list-outline" size={17} color={colors.accent} />
+          <Text style={styles.actionPillText}>Queue</Text>
+          {upcomingQueue.length > 0 && (
+            <View style={styles.actionBadge}>
+              <Text style={styles.actionBadgeText}>{upcomingQueue.length}</Text>
+            </View>
+          )}
+        </TouchableOpacity>
+      </View>
+
       {/* Jam room info */}
       {isInRoom && memberCount > 0 && (
         <View style={styles.jamInfo}>
@@ -340,6 +411,26 @@ export default function PlayerScreen() {
           <AvatarRow count={memberCount} />
         </View>
       )}
+
+      {/* Sleep Timer Modal */}
+      <SleepTimerModal
+        visible={showSleepTimer}
+        onClose={() => setShowSleepTimer(false)}
+      />
+
+      {/* Queue Modal */}
+      <QueueModal
+        visible={showQueue}
+        onClose={() => setShowQueue(false)}
+      />
+
+      {/* Lyrics Modal */}
+      <LyricsModal
+        visible={showLyrics}
+        onClose={() => setShowLyrics(false)}
+        song={currentSong}
+        positionMs={positionMs}
+      />
     </View>
   );
 }
@@ -514,5 +605,57 @@ const styles = StyleSheet.create({
     fontSize: typography.sizes.lg,
     color: colors.textSecondary,
     marginTop: spacing.lg,
+  },
+  sleepTimerButton: {
+    width: 44,
+    height: 44,
+    justifyContent: 'center',
+    alignItems: 'center',
+    position: 'relative',
+  },
+  sleepTimerDot: {
+    position: 'absolute',
+    bottom: 6,
+    right: 10,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.accent,
+  },
+  actionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.md,
+    marginTop: spacing.xl,
+    paddingHorizontal: spacing.lg,
+  },
+  actionPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(184, 166, 224, 0.09)',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs + 2,
+    borderRadius: borderRadius.full,
+    borderWidth: 1,
+    borderColor: colors.accentAlpha25,
+    gap: 6,
+  },
+  actionPillText: {
+    fontSize: typography.sizes.xs,
+    fontWeight: typography.weights.semibold,
+    color: colors.textPrimary,
+  },
+  actionBadge: {
+    backgroundColor: colors.accent,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: borderRadius.full,
+    marginLeft: 2,
+  },
+  actionBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: colors.background,
   },
 });

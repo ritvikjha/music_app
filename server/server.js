@@ -178,6 +178,10 @@ io.on('connection', (socket) => {
         broadcastSyncState(room);
         break;
       }
+      case 'skip-next': {
+        advanceRoomQueue(room);
+        break;
+      }
     }
   });
 
@@ -221,16 +225,16 @@ io.on('connection', (socket) => {
     }
   });
 
-  // 5. Queue Remove (only allowed for original adder)
-  socket.on('queue-remove', ({ roomId, songId }) => {
+  // 5. Queue Remove (only allowed for original adder unless forced)
+  socket.on('queue-remove', ({ roomId, songId, force }) => {
     const room = rooms.get(roomId);
     if (!room || !songId) return;
 
     const index = room.queue.findIndex((item) => item.songId === songId);
     if (index !== -1) {
       const item = room.queue[index];
-      // Verify ownership by socket ID if applicable
-      if (item.socketId && item.socketId !== socket.id) {
+      // Verify ownership by socket ID if applicable (unless force/advance)
+      if (!force && item.socketId && item.socketId !== socket.id) {
         console.warn(`[Room ${roomId}] Unauthorized remove attempt by ${socket.id}`);
         return;
       }
@@ -241,7 +245,40 @@ io.on('connection', (socket) => {
     }
   });
 
-  // 6. Disconnect
+  // 6. Track Ended notification (auto-advance queue)
+  socket.on('track-ended', ({ roomId, songId }) => {
+    const room = rooms.get(roomId);
+    if (!room) return;
+    if (room.songId === songId) {
+      advanceRoomQueue(room);
+    }
+  });
+
+  // 7. Chat Message broadcast
+  socket.on('chat-message', ({ roomId, message, user }) => {
+    if (!roomId || !message) return;
+    io.to(roomId).emit('chat-message', {
+      id: `${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      roomId,
+      message,
+      user: user || { username: 'Anonymous' },
+      timestamp: Date.now(),
+    });
+  });
+
+  // 8. Emoji Reaction broadcast
+  socket.on('emoji-reaction', ({ roomId, emoji, user }) => {
+    if (!roomId || !emoji) return;
+    io.to(roomId).emit('emoji-reaction', {
+      id: `${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      roomId,
+      emoji,
+      user: user || { username: 'Anonymous' },
+      timestamp: Date.now(),
+    });
+  });
+
+  // 9. Disconnect
   socket.on('disconnect', () => {
     console.log(`[Socket Disconnected] ID: ${socket.id}`);
     if (currentRoomId) {

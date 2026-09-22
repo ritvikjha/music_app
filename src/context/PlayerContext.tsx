@@ -3,6 +3,7 @@ import { audioPlayer } from '../services/audioPlayer';
 import { getSongById } from '../services/saavn';
 import { useQueue } from './QueueContext';
 import { useLibrary } from './LibraryContext';
+import { CONFIG } from '../config';
 import type { Song } from '../types';
 
 interface PlayerContextValue {
@@ -48,6 +49,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const positionMsRef = useRef(0);
   const repeatModeRef = useRef(repeatMode);
   const currentSongRef = useRef(currentSong);
+  // Guard: when true, audioPlayer status updates are ignored to prevent feedback loops
+  const isSyncingRef = useRef(false);
 
   positionMsRef.current = positionMs;
   repeatModeRef.current = repeatMode;
@@ -60,6 +63,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   // Subscribe to audio status updates
   useEffect(() => {
     const unsubscribe = audioPlayer.onStatusUpdate((status) => {
+      // Skip status updates while _forceState is actively syncing
+      // to prevent feedback loops (local status → re-render → resync → repeat)
+      if (isSyncingRef.current) return;
       setIsPlaying(status.isPlaying);
       setPositionMs(status.positionMillis ?? 0);
       setDurationMs(status.durationMillis ?? 0);
@@ -148,35 +154,54 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   /**
    * Force the player into a specific state — used by JamContext
    * when receiving sync-state from the server.
+   * Sets isSyncingRef to suppress local status callbacks during the operation.
    */
   const _forceState = useCallback(
     async (opts: { songId: string; isPlaying: boolean; positionMs: number }) => {
-      // If the song changed, load the new one
-      if (currentSongRef.current?.id !== opts.songId && opts.songId) {
-        setIsLoading(true);
-        try {
-          const song = await getSongById(opts.songId);
-          if (song) {
-            setCurrentSong(song);
-            await audioPlayer.loadAndPlay(song.streamUrl);
-            await audioPlayer.seekTo(opts.positionMs);
-            if (!opts.isPlaying) {
-              await audioPlayer.pause();
+      isSyncingRef.current = true;
+      try {
+        // If the song changed, load the new one
+        if (currentSongRef.current?.id !== opts.songId && opts.songId) {
+          setIsLoading(true);
+          try {
+            const song = await getSongById(opts.songId);
+            if (song) {
+              setCurrentSong(song);
+              currentSongRef.current = song;
+              await audioPlayer.loadAndPlay(song.streamUrl);
+              await audioPlayer.seekTo(opts.positionMs);
+              if (!opts.isPlaying) {
+                await audioPlayer.pause();
+              }
             }
+          } catch (error) {
+            console.error('[Player] Failed to force song change:', error);
+          } finally {
+            setIsLoading(false);
           }
-        } catch (error) {
-          console.error('[Player] Failed to force song change:', error);
-        } finally {
-          setIsLoading(false);
-        }
-      } else {
-        // Same song — just adjust position and play state
-        await audioPlayer.seekTo(opts.positionMs);
-        if (opts.isPlaying) {
-          await audioPlayer.play();
         } else {
-          await audioPlayer.pause();
+          // Same song — only seek if drift exceeds tolerance
+          const drift = Math.abs(positionMsRef.current - opts.positionMs);
+          if (drift > CONFIG.DRIFT_TOLERANCE_MS) {
+            await audioPlayer.seekTo(opts.positionMs);
+          }
+          // Only toggle play state if it actually differs
+          const currentStatus = await audioPlayer.getStatus();
+          const locallyPlaying = currentStatus?.isPlaying ?? false;
+          if (opts.isPlaying && !locallyPlaying) {
+            await audioPlayer.play();
+          } else if (!opts.isPlaying && locallyPlaying) {
+            await audioPlayer.pause();
+          }
         }
+        // Update React state to match server truth
+        setIsPlaying(opts.isPlaying);
+        setPositionMs(opts.positionMs);
+      } finally {
+        // Allow a short settling period before re-enabling status callbacks
+        setTimeout(() => {
+          isSyncingRef.current = false;
+        }, 150);
       }
     },
     []
