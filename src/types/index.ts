@@ -89,6 +89,19 @@ export interface Friend {
   activity?: string; // e.g., "Listening to Shape of You" or "In a Jam room"
 }
 
+export interface FriendRequest {
+  id: string;
+  from: {
+    username: string;
+    tag: string;
+  };
+  to: {
+    username: string;
+    tag: string;
+  };
+  timestamp: number;
+}
+
 // ─── Auth ────────────────────────────────────────────────────────────────────
 
 export interface User {

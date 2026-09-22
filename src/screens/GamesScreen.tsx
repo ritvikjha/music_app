@@ -14,6 +14,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   FlatList,
+  Keyboard,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
@@ -90,6 +91,22 @@ export default function GamesScreen() {
   const [showChatModal, setShowChatModal] = useState(false);
   const [chatInputText, setChatInputText] = useState('');
   const chatListRef = useRef<FlatList<JamChatMessage> | null>(null);
+  const [isKeyboardVisible, setKeyboardVisible] = useState(false);
+
+  useEffect(() => {
+    const showSub = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
+      () => setKeyboardVisible(true)
+    );
+    const hideSub = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
+      () => setKeyboardVisible(false)
+    );
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   // Sync Event & Chat Floating Toast
   const [partyNotice, setPartyNotice] = useState<string | null>(null);
@@ -1501,7 +1518,16 @@ export default function GamesScreen() {
             />
 
             {/* Chat Input Bar */}
-            <View style={styles.chatInputRow}>
+            <View
+              style={[
+                styles.chatInputRow,
+                {
+                  paddingBottom: isKeyboardVisible
+                    ? 12
+                    : Math.max((insets.bottom || 0) + 16, Platform.OS === 'android' ? 64 : 32),
+                },
+              ]}
+            >
               <TextInput
                 style={styles.chatInput}
                 placeholder="Type a roast, dare, or reaction..."

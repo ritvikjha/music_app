@@ -18,19 +18,18 @@ import * as Haptics from 'expo-haptics';
 import { useAuth } from '../context/AuthContext';
 import { useJam } from '../context/JamContext';
 import { useToast } from '../context/ToastContext';
+import { syncManager } from '../services/playbackSyncManager';
 import { colors, spacing, borderRadius, typography } from '../theme';
-import type { Friend } from '../types';
+import type { Friend, FriendRequest } from '../types';
 
 const STORAGE_KEY = '@jam_friends_list';
-
-function randomTag(): string {
-  return Math.floor(Math.random() * 10000)
-    .toString()
-    .padStart(4, '0');
-}
+const INCOMING_REQ_KEY = '@jam_incoming_friend_requests';
+const SENT_REQ_KEY = '@jam_sent_friend_requests';
 
 export function SquadSection() {
   const [friends, setFriends] = useState<Friend[]>([]);
+  const [incomingRequests, setIncomingRequests] = useState<FriendRequest[]>([]);
+  const [sentRequests, setSentRequests] = useState<FriendRequest[]>([]);
   const [showAddModal, setShowAddModal] = useState(false);
   const [friendInput, setFriendInput] = useState('');
   const { fullTag, user } = useAuth();
@@ -38,26 +37,146 @@ export function SquadSection() {
   const { showToast } = useToast();
   const router = useRouter();
 
-  // Load saved friends
+  // Load saved friends and friend requests from storage
   useEffect(() => {
     (async () => {
       try {
-        const saved = await AsyncStorage.getItem(STORAGE_KEY);
-        if (saved) {
-          const parsed = JSON.parse(saved);
-          if (Array.isArray(parsed)) {
-            const migrated = parsed.map((f: Friend) => ({
-              ...f,
-              tag: f.tag || randomTag(),
-            }));
-            setFriends(migrated);
-          }
+        const savedFriends = await AsyncStorage.getItem(STORAGE_KEY);
+        if (savedFriends) {
+          const parsed = JSON.parse(savedFriends);
+          if (Array.isArray(parsed)) setFriends(parsed);
+        }
+
+        const savedIncoming = await AsyncStorage.getItem(INCOMING_REQ_KEY);
+        if (savedIncoming) {
+          const parsed = JSON.parse(savedIncoming);
+          if (Array.isArray(parsed)) setIncomingRequests(parsed);
+        }
+
+        const savedSent = await AsyncStorage.getItem(SENT_REQ_KEY);
+        if (savedSent) {
+          const parsed = JSON.parse(savedSent);
+          if (Array.isArray(parsed)) setSentRequests(parsed);
         }
       } catch (err) {
-        console.error('[Squad] Failed to load friends:', err);
+        console.error('[Squad] Failed to load squad data:', err);
       }
     })();
   }, []);
+
+  // Register personal inbox for real-time peer friend requests
+  useEffect(() => {
+    if (user?.username && user?.tag) {
+      syncManager.setUserInbox(user.username, user.tag);
+    }
+  }, [user]);
+
+  // Subscribe to real-time friend signaling
+  useEffect(() => {
+    const unsubReq = syncManager.onFriendRequest((req) => {
+      // Check if this request is targeted to me
+      if (
+        user &&
+        req.to.username.toLowerCase() !== user.username.toLowerCase() &&
+        req.to.tag !== user.tag
+      ) {
+        return;
+      }
+
+      setFriends((currFriends) => {
+        // Check if already friends
+        const isAlreadyFriend = currFriends.some(
+          (f) =>
+            f.username.toLowerCase() === req.from.username.toLowerCase() &&
+            f.tag === req.from.tag
+        );
+        if (isAlreadyFriend) return currFriends;
+
+        setIncomingRequests((prev) => {
+          if (
+            prev.some(
+              (r) =>
+                r.id === req.id ||
+                (r.from.username.toLowerCase() === req.from.username.toLowerCase() &&
+                  r.from.tag === req.from.tag)
+            )
+          ) {
+            return prev;
+          }
+          const updated = [req, ...prev];
+          AsyncStorage.setItem(INCOMING_REQ_KEY, JSON.stringify(updated)).catch(() => {});
+          try {
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          } catch {}
+          showToast(`🔔 Friend request from ${req.from.username}#${req.from.tag}!`, 'info');
+          return updated;
+        });
+
+        return currFriends;
+      });
+    });
+
+    const unsubAccept = syncManager.onFriendAccept((data) => {
+      // Remove from our pending sent requests
+      setSentRequests((prev) => {
+        const updated = prev.filter(
+          (r) =>
+            !(
+              r.to.username.toLowerCase() === data.from.username.toLowerCase() &&
+              r.to.tag === data.from.tag
+            )
+        );
+        AsyncStorage.setItem(SENT_REQ_KEY, JSON.stringify(updated)).catch(() => {});
+        return updated;
+      });
+
+      // Add to our squad list
+      setFriends((prev) => {
+        const isAlready = prev.some(
+          (f) =>
+            f.username.toLowerCase() === data.from.username.toLowerCase() &&
+            f.tag === data.from.tag
+        );
+        if (isAlready) return prev;
+
+        const newFriend: Friend = {
+          id: Date.now().toString(),
+          username: data.from.username,
+          tag: data.from.tag,
+          isOnline: true,
+          activity: 'Ready to Jam',
+        };
+        const updated = [newFriend, ...prev];
+        AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updated)).catch(() => {});
+        try {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        } catch {}
+        showToast(`🎉 ${data.from.username}#${data.from.tag} accepted your friend request!`, 'success');
+        return updated;
+      });
+    });
+
+    const unsubDecline = syncManager.onFriendDecline((data) => {
+      setSentRequests((prev) => {
+        const updated = prev.filter(
+          (r) =>
+            !(
+              r.to.username.toLowerCase() === data.from.username.toLowerCase() &&
+              r.to.tag === data.from.tag
+            )
+        );
+        AsyncStorage.setItem(SENT_REQ_KEY, JSON.stringify(updated)).catch(() => {});
+        return updated;
+      });
+      showToast(`${data.from.username}#${data.from.tag} declined your request.`, 'info');
+    });
+
+    return () => {
+      unsubReq();
+      unsubAccept();
+      unsubDecline();
+    };
+  }, [user, showToast]);
 
   const saveFriends = async (updated: Friend[]) => {
     setFriends(updated);
@@ -72,32 +191,51 @@ export function SquadSection() {
     const raw = friendInput.trim();
     if (!raw) return;
 
-    let username = raw;
-    let tag = '';
-
-    if (raw.includes('#')) {
-      const parts = raw.split('#');
-      username = parts[0].trim();
-      tag = parts[1].trim();
-    }
-
-    if (!username) {
-      Alert.alert('Invalid Name', 'Please enter a valid friend username.');
+    // Strict validation: Must match "Username#1234" (4-digit tag)
+    const match = raw.match(/^([a-zA-Z0-9_\-\. ]+)#([0-9]{4})$/);
+    if (!match) {
+      Alert.alert(
+        'Specific Tag Required',
+        'You can only send friend requests to a specific friend tag.\n\nPlease enter their full name and 4-digit tag (e.g. Alex#9201).\n\nAsk your friend to tap the Share button in their Squad to copy their exact tag!'
+      );
       return;
     }
 
-    if (!tag) {
-      tag = randomTag();
+    const targetUsername = match[1].trim();
+    const targetTag = match[2].trim();
+
+    // Prevent sending request to oneself
+    if (
+      user &&
+      targetUsername.toLowerCase() === user.username.toLowerCase() &&
+      targetTag === user.tag
+    ) {
+      Alert.alert('Cannot Add Yourself', 'You cannot send a friend request to your own tag.');
+      return;
     }
 
-    const isDuplicate = friends.some(
+    // Prevent duplicate friend
+    const isAlreadyFriend = friends.some(
       (f) =>
-        f.username.toLowerCase() === username.toLowerCase() &&
-        f.tag === tag
+        f.username.toLowerCase() === targetUsername.toLowerCase() &&
+        f.tag === targetTag
     );
+    if (isAlreadyFriend) {
+      Alert.alert('Already Added', `${targetUsername}#${targetTag} is already in your squad.`);
+      return;
+    }
 
-    if (isDuplicate) {
-      Alert.alert('Already Added', `${username}#${tag} is already in your squad.`);
+    // Prevent duplicate pending request
+    const isAlreadySent = sentRequests.some(
+      (r) =>
+        r.to.username.toLowerCase() === targetUsername.toLowerCase() &&
+        r.to.tag === targetTag
+    );
+    if (isAlreadySent) {
+      Alert.alert(
+        'Request Already Sent',
+        `A friend request has already been sent to ${targetUsername}#${targetTag}. Waiting for them to accept.`
+      );
       return;
     }
 
@@ -105,20 +243,78 @@ export function SquadSection() {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch {}
 
-    const newFriend: Friend = {
-      id: Date.now().toString(),
-      username,
-      tag,
-      isOnline: true,
-      activity: 'Ready to Jam',
-    };
+    // Send real-time peer request
+    const newReq = syncManager.sendFriendRequest(targetUsername, targetTag, {
+      username: user?.username || 'Player',
+      tag: user?.tag || '0000',
+    });
 
-    const updated = [newFriend, ...friends];
-    saveFriends(updated);
+    const updatedSent = [newReq, ...sentRequests];
+    setSentRequests(updatedSent);
+    AsyncStorage.setItem(SENT_REQ_KEY, JSON.stringify(updatedSent)).catch(() => {});
+
     setFriendInput('');
     setShowAddModal(false);
     Keyboard.dismiss();
-    showToast(`Added ${username}#${tag} to your Squad!`, 'success');
+    showToast(`Friend request sent to ${targetUsername}#${targetTag}!`, 'success');
+  };
+
+  const handleAcceptRequest = (req: FriendRequest) => {
+    if (!user) return;
+    try {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch {}
+
+    // Send acceptance confirmation over socket
+    syncManager.acceptFriendRequest(req, {
+      username: user.username,
+      tag: user.tag,
+    });
+
+    // Add friend to local squad
+    const newFriend: Friend = {
+      id: Date.now().toString(),
+      username: req.from.username,
+      tag: req.from.tag,
+      isOnline: true,
+      activity: 'Ready to Jam',
+    };
+    const updatedFriends = [newFriend, ...friends];
+    saveFriends(updatedFriends);
+
+    // Remove from incoming requests
+    const updatedIncoming = incomingRequests.filter((r) => r.id !== req.id);
+    setIncomingRequests(updatedIncoming);
+    AsyncStorage.setItem(INCOMING_REQ_KEY, JSON.stringify(updatedIncoming)).catch(() => {});
+
+    showToast(`Added ${req.from.username}#${req.from.tag} to your Squad! 🎉`, 'success');
+  };
+
+  const handleDeclineRequest = (req: FriendRequest) => {
+    if (!user) return;
+    try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } catch {}
+
+    // Notify sender over socket
+    syncManager.declineFriendRequest(req, {
+      username: user.username,
+      tag: user.tag,
+    });
+
+    // Remove from incoming requests
+    const updatedIncoming = incomingRequests.filter((r) => r.id !== req.id);
+    setIncomingRequests(updatedIncoming);
+    AsyncStorage.setItem(INCOMING_REQ_KEY, JSON.stringify(updatedIncoming)).catch(() => {});
+
+    showToast(`Declined request from ${req.from.username}`, 'info');
+  };
+
+  const handleCancelSentRequest = (req: FriendRequest) => {
+    const updatedSent = sentRequests.filter((r) => r.id !== req.id);
+    setSentRequests(updatedSent);
+    AsyncStorage.setItem(SENT_REQ_KEY, JSON.stringify(updatedSent)).catch(() => {});
+    showToast(`Cancelled request to ${req.to.username}#${req.to.tag}`, 'info');
   };
 
   const handleRemoveFriend = (friend: Friend) => {
@@ -218,6 +414,75 @@ export function SquadSection() {
         </View>
       </View>
 
+      {/* ─── Incoming Friend Requests ───────────────────────────────── */}
+      {incomingRequests.length > 0 && (
+        <View style={styles.incomingSection}>
+          <View style={styles.incomingSectionHeader}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Ionicons name="notifications" size={14} color="#00F2FE" />
+              <Text style={styles.incomingSectionTitle}>INCOMING SQUAD REQUESTS</Text>
+            </View>
+            <View style={styles.incomingBadge}>
+              <Text style={styles.incomingBadgeText}>{incomingRequests.length}</Text>
+            </View>
+          </View>
+          {incomingRequests.map((req) => (
+            <View key={req.id} style={styles.incomingCard}>
+              <View style={styles.incomingCardLeft}>
+                <View style={styles.incomingAvatar}>
+                  <Text style={styles.incomingAvatarText}>
+                    {req.from.username.charAt(0).toUpperCase()}
+                  </Text>
+                </View>
+                <View>
+                  <Text style={styles.incomingUsername}>{req.from.username}</Text>
+                  <Text style={styles.incomingUserTag}>#{req.from.tag} wants to add you</Text>
+                </View>
+              </View>
+              <View style={styles.incomingCardRight}>
+                <TouchableOpacity
+                  style={styles.incomingAcceptBtn}
+                  onPress={() => handleAcceptRequest(req)}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="checkmark" size={14} color="#050508" />
+                  <Text style={styles.incomingAcceptBtnText}>ACCEPT</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.incomingDeclineBtn}
+                  onPress={() => handleDeclineRequest(req)}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="close" size={14} color={colors.textSecondary} />
+                </TouchableOpacity>
+              </View>
+            </View>
+          ))}
+        </View>
+      )}
+
+      {/* ─── Pending Sent Requests ──────────────────────────────────── */}
+      {sentRequests.length > 0 && (
+        <View style={styles.sentRequestsWrap}>
+          <Text style={styles.sentRequestsTitle}>PENDING SENT REQUESTS:</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
+            {sentRequests.map((req) => (
+              <View key={req.id} style={styles.sentPill}>
+                <Text style={styles.sentPillText}>
+                  {req.to.username}#{req.to.tag} (waiting...)
+                </Text>
+                <TouchableOpacity
+                  onPress={() => handleCancelSentRequest(req)}
+                  hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                >
+                  <Ionicons name="close-circle" size={14} color={colors.textSecondary} />
+                </TouchableOpacity>
+              </View>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+
       {/* Friends Cards Scroll */}
       {friends.length === 0 ? (
         <View style={styles.emptyCard}>
@@ -229,7 +494,7 @@ export function SquadSection() {
           />
           <Text style={styles.emptyTitle}>No squad members yet</Text>
           <Text style={styles.emptySubtitle}>
-            Add your friends by their tag (e.g. Ritvik#4821) to listen together in sync!
+            Add a friend by their exact tag (e.g. Alex#9201) to listen together in sync!
           </Text>
           <TouchableOpacity
             style={styles.emptyAddBtn}
@@ -237,7 +502,7 @@ export function SquadSection() {
             activeOpacity={0.8}
           >
             <Ionicons name="person-add" size={15} color={colors.background} />
-            <Text style={styles.emptyAddBtnText}>Add First Friend</Text>
+            <Text style={styles.emptyAddBtnText}>Send Friend Request</Text>
           </TouchableOpacity>
         </View>
       ) : (
@@ -293,7 +558,7 @@ export function SquadSection() {
             <View style={styles.modalHeader}>
               <View style={styles.modalTitleRow}>
                 <Ionicons name="person-add-outline" size={20} color={colors.accent} />
-                <Text style={styles.modalTitle}>Add Friend to Squad</Text>
+                <Text style={styles.modalTitle}>Send Friend Request</Text>
               </View>
               <TouchableOpacity
                 onPress={() => setShowAddModal(false)}
@@ -304,12 +569,12 @@ export function SquadSection() {
             </View>
 
             <Text style={styles.modalHelpText}>
-              Enter your friend's name and 4-digit tag (e.g. "Ritvik#4821" or just "Ritvik"):
+              Enter your friend's exact username and 4-digit tag (e.g. "Alex#9201"). They will receive your request in real time!
             </Text>
 
             <TextInput
               style={styles.modalInput}
-              placeholder="FriendName#1234"
+              placeholder="Username#1234 (e.g. Alex#9201)"
               placeholderTextColor={colors.textSecondary}
               value={friendInput}
               onChangeText={setFriendInput}
@@ -332,7 +597,7 @@ export function SquadSection() {
                 onPress={handleAddFriend}
                 disabled={!friendInput.trim()}
               >
-                <Text style={styles.confirmBtnText}>Add Friend</Text>
+                <Text style={styles.confirmBtnText}>Send Request</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -593,5 +858,128 @@ const styles = StyleSheet.create({
     fontSize: typography.sizes.sm,
     fontWeight: typography.weights.bold,
     color: colors.background,
+  },
+  incomingSection: {
+    backgroundColor: '#151426',
+    borderRadius: 16,
+    padding: 12,
+    marginBottom: spacing.md,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 242, 254, 0.35)',
+  },
+  incomingSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  incomingSectionTitle: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: '#00F2FE',
+    letterSpacing: 0.5,
+  },
+  incomingBadge: {
+    backgroundColor: 'rgba(0, 242, 254, 0.2)',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 8,
+  },
+  incomingBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#00F2FE',
+  },
+  incomingCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#1E1D32',
+    borderRadius: 12,
+    padding: 10,
+    marginVertical: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  incomingCardLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    flex: 1,
+  },
+  incomingAvatar: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: 'rgba(0, 242, 254, 0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#00F2FE',
+  },
+  incomingAvatarText: {
+    color: '#00F2FE',
+    fontWeight: '900',
+    fontSize: 14,
+  },
+  incomingUsername: {
+    color: colors.textPrimary,
+    fontWeight: '800',
+    fontSize: 13,
+  },
+  incomingUserTag: {
+    color: colors.textSecondary,
+    fontSize: 10,
+  },
+  incomingCardRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  incomingAcceptBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#00F2FE',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+  },
+  incomingAcceptBtnText: {
+    color: '#050508',
+    fontWeight: '900',
+    fontSize: 11,
+  },
+  incomingDeclineBtn: {
+    padding: 6,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  sentRequestsWrap: {
+    marginBottom: spacing.sm,
+    paddingHorizontal: 2,
+  },
+  sentRequestsTitle: {
+    color: colors.textSecondary,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+    marginBottom: 5,
+  },
+  sentPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderRadius: 10,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  sentPillText: {
+    color: colors.textSecondary,
+    fontSize: 11,
+    fontWeight: '600',
   },
 });

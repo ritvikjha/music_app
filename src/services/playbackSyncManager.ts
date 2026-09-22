@@ -1,7 +1,15 @@
 import { io, Socket } from 'socket.io-client';
 import { CONFIG } from '../config';
 import { audioPlayer } from './audioPlayer';
-import type { SyncState, PlaybackAction, JamQueueState, JamChatMessage, JamEmojiReaction, PartyGameEvent } from '../types';
+import type {
+  SyncState,
+  PlaybackAction,
+  JamQueueState,
+  JamChatMessage,
+  JamEmojiReaction,
+  PartyGameEvent,
+  FriendRequest,
+} from '../types';
 
 type SyncStateCallback = (state: SyncState) => void;
 type MemberCountCallback = (count: number) => void;
@@ -9,6 +17,9 @@ type QueueStateCallback = (state: JamQueueState) => void;
 type ChatMessageCallback = (msg: JamChatMessage) => void;
 type EmojiReactionCallback = (reaction: JamEmojiReaction) => void;
 type GameEventCallback = (event: PartyGameEvent) => void;
+type FriendRequestCallback = (req: FriendRequest) => void;
+type FriendAcceptCallback = (data: { from: { username: string; tag: string }; to: { username: string; tag: string }; requestId: string }) => void;
+type FriendDeclineCallback = (data: { from: { username: string; tag: string }; to: { username: string; tag: string }; requestId: string }) => void;
 
 /**
  * PlaybackSyncManager — owns the Socket.io connection to the Jam sync server.
@@ -17,6 +28,7 @@ type GameEventCallback = (event: PartyGameEvent) => void;
 class PlaybackSyncManager {
   private socket: Socket | null = null;
   private currentRoomId: string | null = null;
+  private userInboxRoomId: string | null = null;
   private resyncInterval: ReturnType<typeof setInterval> | null = null;
   private syncStateCallbacks: Set<SyncStateCallback> = new Set();
   private memberCountCallbacks: Set<MemberCountCallback> = new Set();
@@ -24,6 +36,9 @@ class PlaybackSyncManager {
   private chatMessageCallbacks: Set<ChatMessageCallback> = new Set();
   private emojiReactionCallbacks: Set<EmojiReactionCallback> = new Set();
   private gameEventCallbacks: Set<GameEventCallback> = new Set();
+  private friendRequestCallbacks: Set<FriendRequestCallback> = new Set();
+  private friendAcceptCallbacks: Set<FriendAcceptCallback> = new Set();
+  private friendDeclineCallbacks: Set<FriendDeclineCallback> = new Set();
 
   /**
    * Connect to the sync server.
@@ -44,6 +59,10 @@ class PlaybackSyncManager {
       if (this.currentRoomId) {
         this.socket?.emit('join-room', this.currentRoomId);
       }
+      // Re-join personal inbox room if registered
+      if (this.userInboxRoomId) {
+        this.socket?.emit('join-room', this.userInboxRoomId);
+      }
     });
 
     this.socket.on('sync-state', (state: SyncState) => {
@@ -59,13 +78,42 @@ class PlaybackSyncManager {
     });
 
     this.socket.on('chat-message', (msg: JamChatMessage) => {
-      if (typeof msg.message === 'string' && msg.message.startsWith('__JAM_GAME__:')) {
-        try {
-          const gamePayload = JSON.parse(msg.message.slice('__JAM_GAME__:'.length)) as PartyGameEvent;
-          this.gameEventCallbacks.forEach((cb) => cb(gamePayload));
-          return;
-        } catch (err) {
-          console.warn('[SyncManager] Failed to parse party game event:', err);
+      if (typeof msg.message === 'string') {
+        if (msg.message.startsWith('__JAM_GAME__:')) {
+          try {
+            const gamePayload = JSON.parse(msg.message.slice('__JAM_GAME__:'.length)) as PartyGameEvent;
+            this.gameEventCallbacks.forEach((cb) => cb(gamePayload));
+            return;
+          } catch (err) {
+            console.warn('[SyncManager] Failed to parse party game event:', err);
+          }
+        }
+        if (msg.message.startsWith('__FRIEND_REQ__:')) {
+          try {
+            const req = JSON.parse(msg.message.slice('__FRIEND_REQ__:'.length)) as FriendRequest;
+            this.friendRequestCallbacks.forEach((cb) => cb(req));
+            return;
+          } catch (err) {
+            console.warn('[SyncManager] Failed to parse friend request:', err);
+          }
+        }
+        if (msg.message.startsWith('__FRIEND_ACCEPT__:')) {
+          try {
+            const data = JSON.parse(msg.message.slice('__FRIEND_ACCEPT__:'.length));
+            this.friendAcceptCallbacks.forEach((cb) => cb(data));
+            return;
+          } catch (err) {
+            console.warn('[SyncManager] Failed to parse friend accept:', err);
+          }
+        }
+        if (msg.message.startsWith('__FRIEND_DECLINE__:')) {
+          try {
+            const data = JSON.parse(msg.message.slice('__FRIEND_DECLINE__:'.length));
+            this.friendDeclineCallbacks.forEach((cb) => cb(data));
+            return;
+          } catch (err) {
+            console.warn('[SyncManager] Failed to parse friend decline:', err);
+          }
         }
       }
       this.chatMessageCallbacks.forEach((cb) => cb(msg));
@@ -118,6 +166,9 @@ class PlaybackSyncManager {
     if (this.socket) {
       this.socket.disconnect();
       this.socket.connect();
+      if (this.userInboxRoomId) {
+        this.socket.emit('join-room', this.userInboxRoomId);
+      }
     }
   }
 
@@ -266,6 +317,115 @@ class PlaybackSyncManager {
   onGameEvent(cb: GameEventCallback): () => void {
     this.gameEventCallbacks.add(cb);
     return () => this.gameEventCallbacks.delete(cb);
+  }
+
+  /**
+   * Register the current user's identity to receive incoming targeted friend requests
+   */
+  setUserInbox(username: string, tag: string): void {
+    if (!this.socket) this.connect();
+    const cleanUser = username.trim().toLowerCase();
+    const cleanTag = tag.trim();
+    this.userInboxRoomId = `inbox_${cleanUser}_${cleanTag}`;
+    this.socket?.emit('join-room', this.userInboxRoomId);
+  }
+
+  /**
+   * Send a targeted real-time friend request to another user by Username#Tag
+   */
+  sendFriendRequest(
+    targetUsername: string,
+    targetTag: string,
+    sender: { username: string; tag: string }
+  ): FriendRequest {
+    if (!this.socket) this.connect();
+    const cleanTargetUser = targetUsername.trim().toLowerCase();
+    const cleanTargetTag = targetTag.trim();
+    const targetRoom = `inbox_${cleanTargetUser}_${cleanTargetTag}`;
+
+    const request: FriendRequest = {
+      id: `req_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      from: {
+        username: sender.username.trim(),
+        tag: sender.tag.trim(),
+      },
+      to: {
+        username: targetUsername.trim(),
+        tag: targetTag.trim(),
+      },
+      timestamp: Date.now(),
+    };
+
+    this.socket?.emit('chat-message', {
+      roomId: targetRoom,
+      message: '__FRIEND_REQ__:' + JSON.stringify(request),
+      user: { username: sender.username, tag: sender.tag },
+      id: request.id,
+    });
+
+    return request;
+  }
+
+  /**
+   * Accept an incoming friend request and notify the sender
+   */
+  acceptFriendRequest(request: FriendRequest, me: { username: string; tag: string }): void {
+    if (!this.socket) this.connect();
+    const senderRoom = `inbox_${request.from.username.trim().toLowerCase()}_${request.from.tag.trim()}`;
+    const payload = {
+      from: { username: me.username, tag: me.tag },
+      to: request.from,
+      requestId: request.id,
+    };
+    this.socket?.emit('chat-message', {
+      roomId: senderRoom,
+      message: '__FRIEND_ACCEPT__:' + JSON.stringify(payload),
+      user: { username: me.username, tag: me.tag },
+      id: 'acc_' + request.id,
+    });
+  }
+
+  /**
+   * Decline an incoming friend request and notify the sender
+   */
+  declineFriendRequest(request: FriendRequest, me: { username: string; tag: string }): void {
+    if (!this.socket) this.connect();
+    const senderRoom = `inbox_${request.from.username.trim().toLowerCase()}_${request.from.tag.trim()}`;
+    const payload = {
+      from: { username: me.username, tag: me.tag },
+      to: request.from,
+      requestId: request.id,
+    };
+    this.socket?.emit('chat-message', {
+      roomId: senderRoom,
+      message: '__FRIEND_DECLINE__:' + JSON.stringify(payload),
+      user: { username: me.username, tag: me.tag },
+      id: 'dec_' + request.id,
+    });
+  }
+
+  /**
+   * Subscribe to incoming targeted friend requests
+   */
+  onFriendRequest(cb: FriendRequestCallback): () => void {
+    this.friendRequestCallbacks.add(cb);
+    return () => this.friendRequestCallbacks.delete(cb);
+  }
+
+  /**
+   * Subscribe to friend request accepted notifications
+   */
+  onFriendAccept(cb: FriendAcceptCallback): () => void {
+    this.friendAcceptCallbacks.add(cb);
+    return () => this.friendAcceptCallbacks.delete(cb);
+  }
+
+  /**
+   * Subscribe to friend request declined notifications
+   */
+  onFriendDecline(cb: FriendDeclineCallback): () => void {
+    this.friendDeclineCallbacks.add(cb);
+    return () => this.friendDeclineCallbacks.delete(cb);
   }
 
   /**
