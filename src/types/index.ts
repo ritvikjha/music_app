@@ -44,6 +44,27 @@ export interface PlayerModes {
   repeatMode: RepeatMode;
 }
 
+// ─── Sound Presets & Equalizer ────────────────────────────────────────────────
+
+export type SoundPresetId =
+  | 'cyber_dynamic'
+  | 'bass_heavy'
+  | 'vocal_clarity'
+  | 'spatial_synthwave'
+  | 'lofi_analog';
+
+export interface SoundPreset {
+  id: SoundPresetId;
+  name: string;
+  tagline: string;
+  icon: string;
+  accentColor: string;
+  bands: [number, number, number, number, number]; // 60Hz, 250Hz, 1kHz, 4kHz, 16kHz (-6 to +6 dB)
+  volumeGain: number;
+  playbackRate: number;
+  description: string;
+}
+
 // ─── Jam Room Shared Queue ───────────────────────────────────────────────────
 
 export interface JamQueueEntry {

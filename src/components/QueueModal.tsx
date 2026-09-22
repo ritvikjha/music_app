@@ -7,7 +7,7 @@ import {
   FlatList,
   Image,
   StyleSheet,
-  Platform,
+  Switch,
   Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -25,7 +25,16 @@ interface QueueModalProps {
 }
 
 export function QueueModal({ visible, onClose }: QueueModalProps) {
-  const { queue, currentIndex, upcomingQueue, removeAt, clear, playNow } = useQueue();
+  const {
+    queue,
+    currentIndex,
+    upcomingQueue,
+    removeAt,
+    clear,
+    playNow,
+    autoplay,
+    toggleAutoplay,
+  } = useQueue();
   const { currentSong, playSong, isPlaying } = usePlayer();
 
   const handleClear = () => {
@@ -129,6 +138,40 @@ export function QueueModal({ visible, onClose }: QueueModalProps) {
             </View>
           )}
 
+          {/* Autoplay / Endless Radio Banner */}
+          <View style={[styles.autoplayBanner, autoplay && styles.autoplayBannerActive]}>
+            <View style={styles.autoplayLeft}>
+              <View style={[styles.autoplayIconWrap, autoplay && styles.autoplayIconWrapActive]}>
+                <Ionicons
+                  name={autoplay ? 'flash' : 'flash-outline'}
+                  size={18}
+                  color={autoplay ? colors.accent : colors.textSecondary}
+                />
+              </View>
+              <View style={styles.autoplayTextWrap}>
+                <View style={styles.autoplayTitleRow}>
+                  <Text style={styles.autoplayTitle}>Endless Radio</Text>
+                  {autoplay && (
+                    <View style={styles.liveBadge}>
+                      <Text style={styles.liveBadgeText}>SMART AUTOPLAY</Text>
+                    </View>
+                  )}
+                </View>
+                <Text style={styles.autoplayDesc}>
+                  {autoplay
+                    ? 'Queue never ends — similar tracks auto-play'
+                    : 'Playback stops when queue is finished'}
+                </Text>
+              </View>
+            </View>
+            <Switch
+              value={autoplay}
+              onValueChange={toggleAutoplay}
+              trackColor={{ false: '#262533', true: colors.accentAlpha25 }}
+              thumbColor={autoplay ? colors.accent : '#666'}
+            />
+          </View>
+
           {/* Up Next Section */}
           <View style={styles.upNextSection}>
             <Text style={styles.sectionLabel}>UP NEXT</Text>
@@ -136,15 +179,29 @@ export function QueueModal({ visible, onClose }: QueueModalProps) {
             {upcomingQueue.length === 0 ? (
               <View style={styles.emptyContainer}>
                 <Ionicons
-                  name="musical-notes-outline"
-                  size={44}
-                  color={colors.textSecondary}
-                  style={{ opacity: 0.5 }}
+                  name={autoplay ? 'radio-outline' : 'musical-notes-outline'}
+                  size={46}
+                  color={autoplay ? colors.accent : colors.textSecondary}
+                  style={{ opacity: 0.8 }}
                 />
-                <Text style={styles.emptyTitle}>Your queue is empty</Text>
-                <Text style={styles.emptySubtitle}>
-                  Add songs to queue from search or library to keep music playing
+                <Text style={styles.emptyTitle}>
+                  {autoplay ? 'Endless Radio is Ready' : 'Your queue is empty'}
                 </Text>
+                <Text style={styles.emptySubtitle}>
+                  {autoplay
+                    ? 'When this song ends, related tracks will automatically queue and keep playing.'
+                    : 'Add songs to queue or turn on Endless Radio so music never stops.'}
+                </Text>
+                {!autoplay && (
+                  <TouchableOpacity
+                    style={styles.enableAutoplayBtn}
+                    onPress={toggleAutoplay}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="flash" size={15} color={colors.background} />
+                    <Text style={styles.enableAutoplayBtnText}>Turn On Endless Radio</Text>
+                  </TouchableOpacity>
+                )}
               </View>
             ) : (
               <FlatList
@@ -372,5 +429,85 @@ const styles = StyleSheet.create({
   },
   removeBtn: {
     padding: spacing.xs,
+  },
+  autoplayBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm + 2,
+    borderRadius: borderRadius.md,
+    backgroundColor: '#181722',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  autoplayBannerActive: {
+    borderColor: 'rgba(0, 242, 254, 0.35)',
+    backgroundColor: '#161A26',
+  },
+  autoplayLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    flex: 1,
+    marginRight: spacing.sm,
+  },
+  autoplayIconWrap: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  autoplayIconWrapActive: {
+    backgroundColor: colors.accentAlpha25,
+  },
+  autoplayTextWrap: {
+    flex: 1,
+  },
+  autoplayTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  autoplayTitle: {
+    fontSize: typography.sizes.sm,
+    fontWeight: typography.weights.bold,
+    color: colors.textPrimary,
+  },
+  liveBadge: {
+    backgroundColor: colors.accentAlpha25,
+    paddingHorizontal: 6,
+    paddingVertical: 1.5,
+    borderRadius: borderRadius.full,
+  },
+  liveBadgeText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: colors.accent,
+    letterSpacing: 0.5,
+  },
+  autoplayDesc: {
+    fontSize: typography.sizes.xs,
+    color: colors.textSecondary,
+    marginTop: 1,
+  },
+  enableAutoplayBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    backgroundColor: colors.accent,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: borderRadius.full,
+    marginTop: spacing.md,
+  },
+  enableAutoplayBtnText: {
+    fontSize: typography.sizes.xs,
+    fontWeight: typography.weights.bold,
+    color: colors.background,
   },
 });

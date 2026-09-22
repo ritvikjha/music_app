@@ -274,3 +274,92 @@ function getDefaultSearchChips(): string[] {
     'Love Songs', 'Party Songs', 'Sad Songs', 'English Pop',
   ];
 }
+
+/**
+ * Fetch related / recommended songs for Endless Radio and Smart Autoplay.
+ * 1. Uses JioSaavn's dynamic entity station (webradio.createEntityStation & webradio.getSong).
+ * 2. If station unavailable or returns empty, falls back to searching by primary artist.
+ * 3. Fallback to trending hits if needed.
+ * Filters out the current playing song ID and guarantees valid streamUrls.
+ */
+export async function getRelatedSongs(song: Song, count = 10): Promise<Song[]> {
+  if (!song) return [];
+
+  // Attempt 1: JioSaavn WebRadio / Entity Station
+  try {
+    const stationUrl = `https://www.jiosaavn.com/api.php?__call=webradio.createEntityStation&_format=json&_marker=0&ctx=android&entity_id=%5B%22${encodeURIComponent(
+      song.id
+    )}%22%5D&entity_type=queue`;
+
+    const stationRes = await fetch(stationUrl, {
+      headers: {
+        Accept: 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+      },
+    });
+
+    if (stationRes.ok) {
+      const stationData = await stationRes.json();
+      const stationId = stationData?.stationid;
+
+      if (stationId) {
+        const songsUrl = `https://www.jiosaavn.com/api.php?__call=webradio.getSong&_format=json&_marker=0&ctx=android&stationid=${encodeURIComponent(
+          stationId
+        )}&k=${count}`;
+
+        const songsRes = await fetch(songsUrl, {
+          headers: {
+            Accept: 'application/json',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+          },
+        });
+
+        if (songsRes.ok) {
+          const songsData = await songsRes.json();
+          const rawItems: RawJioSaavnSong[] = [];
+          Object.keys(songsData).forEach((key) => {
+            const item = songsData[key];
+            if (item?.song && item.song.id) {
+              rawItems.push(item.song);
+            } else if (item?.id) {
+              rawItems.push(item);
+            }
+          });
+
+          const mapped = rawItems
+            .map(mapRawToSong)
+            .filter((s) => s.id !== song.id && Boolean(s.streamUrl));
+
+          if (mapped.length > 0) {
+            return mapped.slice(0, count);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[Saavn] webradio error, trying fallback:', err);
+  }
+
+  // Attempt 2: Fallback search based on artist name
+  try {
+    const artistQuery = song.artist?.split(/,|&|\//)[0]?.trim() || song.artist;
+    if (artistQuery && artistQuery.length > 2) {
+      const artistSongs = await searchSongs(artistQuery);
+      const filtered = artistSongs.filter((s) => s.id !== song.id && Boolean(s.streamUrl));
+      if (filtered.length > 0) {
+        return filtered.slice(0, count);
+      }
+    }
+  } catch (err) {
+    console.warn('[Saavn] artist fallback error:', err);
+  }
+
+  // Attempt 3: Trending songs fallback
+  try {
+    const trending = await getTrending();
+    return trending.filter((s) => s.id !== song.id && Boolean(s.streamUrl)).slice(0, count);
+  } catch {
+    return [];
+  }
+}
+

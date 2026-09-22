@@ -24,6 +24,7 @@ import { AvatarRow } from '../components/AvatarRow';
 import { SleepTimerModal } from '../components/SleepTimerModal';
 import { QueueModal } from '../components/QueueModal';
 import { LyricsModal } from '../components/LyricsModal';
+import { SoundPresetsModal } from '../components/SoundPresetsModal';
 import { useKeepAwake } from 'expo-keep-awake';
 import { extractDominantColor, DEFAULT_DOMINANT_COLOR, RGBColor } from '../services/albumColors';
 import { colors, spacing, borderRadius, typography, shadows } from '../theme';
@@ -56,6 +57,7 @@ export default function PlayerScreen() {
   const [showSleepTimer, setShowSleepTimer] = useState(false);
   const [showQueue, setShowQueue] = useState(false);
   const [showLyrics, setShowLyrics] = useState(false);
+  const [showSoundPresets, setShowSoundPresets] = useState(false);
 
   // Dominant artwork color
   const [artColor, setArtColor] = useState<RGBColor>(DEFAULT_DOMINANT_COLOR);
@@ -241,18 +243,28 @@ export default function PlayerScreen() {
             <Text style={styles.headerTitle}>Now Playing</Text>
           )}
         </View>
-        <TouchableOpacity
-          style={styles.sleepTimerButton}
-          onPress={() => setShowSleepTimer(true)}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-        >
-          <Ionicons
-            name={sleepTimerActive ? 'moon' : 'moon-outline'}
-            size={22}
-            color={sleepTimerActive ? colors.accent : colors.textSecondary}
-          />
-          {sleepTimerActive && <View style={styles.sleepTimerDot} />}
-        </TouchableOpacity>
+        <View style={styles.headerRight}>
+          <TouchableOpacity
+            style={styles.headerIconButton}
+            onPress={() => setShowSoundPresets(true)}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Ionicons name="options-outline" size={21} color={colors.accent} />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.headerIconButton}
+            onPress={() => setShowSleepTimer(true)}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Ionicons
+              name={sleepTimerActive ? 'moon' : 'moon-outline'}
+              size={21}
+              color={sleepTimerActive ? colors.accent : colors.textSecondary}
+            />
+            {sleepTimerActive && <View style={styles.sleepTimerDot} />}
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Album art with pulse animation and dynamic glow */}
@@ -433,6 +445,12 @@ export default function PlayerScreen() {
         song={currentSong}
         positionMs={positionMs}
       />
+
+      {/* Audio Sound Presets & Equalizer Modal */}
+      <SoundPresetsModal
+        visible={showSoundPresets}
+        onClose={() => setShowSoundPresets(false)}
+      />
     </View>
   );
 }
@@ -479,6 +497,31 @@ const styles = StyleSheet.create({
   headerCenter: {
     flex: 1,
     alignItems: 'center',
+  },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
+  headerIconButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    position: 'relative',
+  },
+  sleepTimerDot: {
+    position: 'absolute',
+    top: 7,
+    right: 7,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.accent,
   },
   headerTitle: {
     fontSize: typography.sizes.sm,
@@ -623,15 +666,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     position: 'relative',
-  },
-  sleepTimerDot: {
-    position: 'absolute',
-    bottom: 6,
-    right: 10,
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: colors.accent,
   },
   actionRow: {
     flexDirection: 'row',

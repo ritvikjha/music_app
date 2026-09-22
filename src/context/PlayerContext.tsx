@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { audioPlayer } from '../services/audioPlayer';
-import { getSongById } from '../services/saavn';
+import { getSongById, getRelatedSongs } from '../services/saavn';
 import { useQueue } from './QueueContext';
 import { useLibrary } from './LibraryContext';
 import { CONFIG } from '../config';
@@ -41,7 +41,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const [durationMs, setDurationMs] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
 
-  const { getNextSong, getPreviousSong, recordPlayedSong, repeatMode } = useQueue();
+  const { getNextSong, getPreviousSong, recordPlayedSong, repeatMode, autoplay, addSongsToQueue } = useQueue();
   const { addRecent } = useLibrary();
 
   // Track whether we're in a jam room
@@ -49,12 +49,15 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const positionMsRef = useRef(0);
   const repeatModeRef = useRef(repeatMode);
   const currentSongRef = useRef(currentSong);
+  const autoplayRef = useRef(autoplay);
+  const isFetchingAutoplayRef = useRef(false);
   // Guard: when true, audioPlayer status updates are ignored to prevent feedback loops
   const isSyncingRef = useRef(false);
 
   positionMsRef.current = positionMs;
   repeatModeRef.current = repeatMode;
   currentSongRef.current = currentSong;
+  autoplayRef.current = autoplay;
 
   const setIsInJam = useCallback((inJam: boolean) => {
     isInJamRef.current = inJam;
@@ -132,10 +135,34 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     const nextSong = getNextSong();
     if (nextSong) {
       await playSong(nextSong);
-    } else {
-      await audioPlayer.pause();
+      return;
     }
-  }, [getNextSong, playSong]);
+
+    // If queue reached the end, check if Smart Autoplay / Endless Radio is active
+    if (
+      autoplayRef.current &&
+      !isInJamRef.current &&
+      currentSongRef.current &&
+      !isFetchingAutoplayRef.current
+    ) {
+      isFetchingAutoplayRef.current = true;
+      try {
+        const related = await getRelatedSongs(currentSongRef.current, 8);
+        if (related.length > 0) {
+          addSongsToQueue(related);
+          const [firstSong] = related;
+          await playSong(firstSong);
+          return;
+        }
+      } catch (err) {
+        console.warn('[PlayerContext] Autoplay error:', err);
+      } finally {
+        isFetchingAutoplayRef.current = false;
+      }
+    }
+
+    await audioPlayer.pause();
+  }, [getNextSong, playSong, addSongsToQueue]);
 
   const skipPrevious = useCallback(async () => {
     // If more than 3 seconds into the track, restart it

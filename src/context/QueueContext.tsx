@@ -3,6 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { Song, RepeatMode, PlayerModes } from '../types';
 
 const PLAYER_MODES_KEY = '@jam_player_modes';
+const AUTOPLAY_KEY = '@jam_autoplay_mode';
 
 interface QueueContextValue {
   queue: Song[];
@@ -11,15 +12,19 @@ interface QueueContextValue {
   history: Song[];
   shuffle: boolean;
   repeatMode: RepeatMode;
+  autoplay: boolean;
 
   playNow: (song: Song, contextList?: Song[]) => void;
   playNext: (song: Song) => void;
   addToQueue: (song: Song) => void;
+  addSongsToQueue: (songs: Song[]) => void;
   removeAt: (index: number) => void;
   move: (fromIndex: number, toIndex: number) => void;
   clear: () => void;
   toggleShuffle: () => void;
   cycleRepeatMode: () => void;
+  toggleAutoplay: () => void;
+  setAutoplay: (enabled: boolean) => void;
 
   getNextSong: () => Song | null;
   getPreviousSong: () => Song | null;
@@ -34,8 +39,9 @@ export function QueueProvider({ children }: { children: React.ReactNode }) {
   const [history, setHistory] = useState<Song[]>([]);
   const [shuffle, setShuffle] = useState(false);
   const [repeatMode, setRepeatMode] = useState<RepeatMode>('off');
+  const [autoplay, setAutoplayState] = useState(true);
 
-  // Hydrate player modes (shuffle & repeatMode) from AsyncStorage
+  // Hydrate player modes (shuffle, repeatMode, autoplay) from AsyncStorage
   useEffect(() => {
     (async () => {
       try {
@@ -44,6 +50,10 @@ export function QueueProvider({ children }: { children: React.ReactNode }) {
           const parsed: PlayerModes = JSON.parse(stored);
           if (typeof parsed.shuffle === 'boolean') setShuffle(parsed.shuffle);
           if (['off', 'all', 'one'].includes(parsed.repeatMode)) setRepeatMode(parsed.repeatMode);
+        }
+        const storedAutoplay = await AsyncStorage.getItem(AUTOPLAY_KEY);
+        if (storedAutoplay !== null) {
+          setAutoplayState(storedAutoplay === 'true');
         }
       } catch (err) {
         console.warn('[QueueContext] Failed to load modes:', err);
@@ -83,6 +93,19 @@ export function QueueProvider({ children }: { children: React.ReactNode }) {
       return next;
     });
   }, [shuffle, saveModes]);
+
+  const toggleAutoplay = useCallback(() => {
+    setAutoplayState((prev) => {
+      const next = !prev;
+      AsyncStorage.setItem(AUTOPLAY_KEY, String(next)).catch(() => {});
+      return next;
+    });
+  }, []);
+
+  const setAutoplay = useCallback((enabled: boolean) => {
+    setAutoplayState(enabled);
+    AsyncStorage.setItem(AUTOPLAY_KEY, String(enabled)).catch(() => {});
+  }, []);
 
   /**
    * Set up queue context and start a song.
@@ -143,6 +166,26 @@ export function QueueProvider({ children }: { children: React.ReactNode }) {
           return [song];
         }
         return [...prev, song];
+      });
+    },
+    []
+  );
+
+  /**
+   * Batch append multiple songs (e.g. from Autoplay / Endless Radio).
+   */
+  const addSongsToQueue = useCallback(
+    (songs: Song[]) => {
+      if (!songs || songs.length === 0) return;
+      setQueue((prev) => {
+        const existingIds = new Set(prev.map((s) => s.id));
+        const newUnique = songs.filter((s) => !existingIds.has(s.id));
+        if (newUnique.length === 0) return prev;
+        if (prev.length === 0) {
+          setCurrentIndex(0);
+          return newUnique;
+        }
+        return [...prev, ...newUnique];
       });
     },
     []
@@ -298,14 +341,18 @@ export function QueueProvider({ children }: { children: React.ReactNode }) {
         history,
         shuffle,
         repeatMode,
+        autoplay,
         playNow,
         playNext,
         addToQueue,
+        addSongsToQueue,
         removeAt,
         move,
         clear,
         toggleShuffle,
         cycleRepeatMode,
+        toggleAutoplay,
+        setAutoplay,
         getNextSong,
         getPreviousSong,
         recordPlayedSong,

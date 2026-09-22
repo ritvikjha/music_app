@@ -28,6 +28,8 @@ class AudioPlayerService {
   private currentMetadata: AudioMetadata | null = null;
   private statusSubscription: { remove: () => void } | null = null;
   private hasFiredTrackEnd = false;
+  private currentVolume = 1.0;
+  private currentPlaybackRate = 1.0;
 
   /**
    * Configure audio mode for music playback (silent mode override & background playback).
@@ -132,6 +134,12 @@ class AudioPlayerService {
         }
       }
 
+      // Apply active volume profile & playback rate
+      try {
+        this.player.volume = this.currentVolume;
+        this.player.playbackRate = this.currentPlaybackRate;
+      } catch {}
+
       this.player.play();
     } catch (error) {
       console.error('[AudioPlayer] loadAndPlay error:', error);
@@ -226,6 +234,43 @@ class AudioPlayerService {
       this.player = null;
       this.currentUri = null;
     }
+  }
+
+  /**
+   * Set playback volume (0.0 to 1.0).
+   */
+  async setVolume(volume: number): Promise<void> {
+    const clamped = Math.max(0, Math.min(1.0, volume));
+    this.currentVolume = clamped;
+    if (this.player) {
+      try {
+        this.player.volume = clamped;
+      } catch (err) {
+        console.warn('[AudioPlayer] setVolume error:', err);
+      }
+    }
+  }
+
+  getVolume(): number {
+    return this.currentVolume;
+  }
+
+  /**
+   * Set playback rate / speed (e.g. 0.8, 1.0, 1.25, 1.5).
+   */
+  async setPlaybackRate(rate: number): Promise<void> {
+    this.currentPlaybackRate = rate;
+    if (this.player) {
+      try {
+        this.player.playbackRate = rate;
+      } catch (err) {
+        console.warn('[AudioPlayer] setPlaybackRate error:', err);
+      }
+    }
+  }
+
+  getPlaybackRate(): number {
+    return this.currentPlaybackRate;
   }
 
   /**

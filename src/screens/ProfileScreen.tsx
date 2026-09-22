@@ -9,6 +9,7 @@ import {
   Modal,
   TextInput,
   Image,
+  Switch,
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -19,9 +20,12 @@ import { useAuth } from '../context/AuthContext';
 import { useLibrary } from '../context/LibraryContext';
 import { usePlayer } from '../context/PlayerContext';
 import { useJam } from '../context/JamContext';
+import { useQueue } from '../context/QueueContext';
 import { useToast } from '../context/ToastContext';
 import { MiniPlayer } from '../components/MiniPlayer';
 import { AnimatedEqualizer } from '../components/AnimatedEqualizer';
+import { SoundPresetsModal } from '../components/SoundPresetsModal';
+import { getActivePreset } from '../services/soundPresets';
 import { colors, spacing, borderRadius, typography, shadows } from '../theme';
 import type { Song } from '../types';
 
@@ -51,11 +55,14 @@ export default function ProfileScreen() {
   const { recentSongs } = useLibrary();
   const { playSong, currentSong, isPlaying } = usePlayer();
   const { isInRoom, jamChangeSong, jamAddToQueue } = useJam();
+  const { autoplay, toggleAutoplay } = useQueue();
   const { showToast } = useToast();
 
   const [copied, setCopied] = useState(false);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [audioQuality, setAudioQuality] = useState<'Normal (160k)' | 'High (320k)'>('High (320k)');
+  const [showSoundPresets, setShowSoundPresets] = useState(false);
+  const [activePresetName, setActivePresetName] = useState('Cyber Dynamic');
 
   // Profile Customization state
   const [profileCustom, setProfileCustom] = useState<UserProfileCustom>({
@@ -84,6 +91,9 @@ export default function ProfileScreen() {
         if (storedQuality) {
           setAudioQuality(storedQuality as any);
         }
+
+        const preset = await getActivePreset();
+        setActivePresetName(preset.name);
       } catch (err) {
         console.warn('[Profile] Failed to load custom settings:', err);
       }
@@ -358,6 +368,46 @@ export default function ProfileScreen() {
         <View style={styles.settingsSection}>
           <Text style={styles.settingsHeaderTitle}>Preferences & Settings</Text>
 
+          {/* Sound Profiles & Equalizer */}
+          <TouchableOpacity
+            style={styles.settingsItem}
+            activeOpacity={0.7}
+            onPress={() => setShowSoundPresets(true)}
+          >
+            <View style={styles.settingsItemLeft}>
+              <Ionicons name="options-outline" size={20} color={colors.accent} />
+              <View>
+                <Text style={styles.settingsText}>Sound Profiles & EQ</Text>
+                <Text style={styles.settingsSubtext}>5-Band tuning, acoustic presets & speed</Text>
+              </View>
+            </View>
+            <View style={styles.profileBadge}>
+              <Text style={styles.profileBadgeText}>{activePresetName}</Text>
+              <Ionicons name="chevron-forward" size={14} color={colors.accent} />
+            </View>
+          </TouchableOpacity>
+
+          {/* Smart Autoplay (Endless Radio) */}
+          <View style={styles.settingsItem}>
+            <View style={styles.settingsItemLeft}>
+              <Ionicons
+                name={autoplay ? 'flash' : 'flash-outline'}
+                size={20}
+                color={autoplay ? colors.accent : colors.textSecondary}
+              />
+              <View>
+                <Text style={styles.settingsText}>Smart Autoplay</Text>
+                <Text style={styles.settingsSubtext}>Auto-play similar tracks when queue ends</Text>
+              </View>
+            </View>
+            <Switch
+              value={autoplay}
+              onValueChange={toggleAutoplay}
+              trackColor={{ false: '#262533', true: colors.accentAlpha25 }}
+              thumbColor={autoplay ? colors.accent : '#666'}
+            />
+          </View>
+
           {/* Audio Quality Toggle */}
           <TouchableOpacity
             style={styles.settingsItem}
@@ -516,6 +566,13 @@ export default function ProfileScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Sound Profiles & Equalizer Modal */}
+      <SoundPresetsModal
+        visible={showSoundPresets}
+        onClose={() => setShowSoundPresets(false)}
+        onPresetChange={(preset) => setActivePresetName(preset.name)}
+      />
 
       <MiniPlayer />
     </View>
@@ -753,6 +810,22 @@ const styles = StyleSheet.create({
     borderColor: colors.accent,
   },
   qualityBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.accent,
+  },
+  profileBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(0, 242, 254, 0.10)',
+    paddingHorizontal: spacing.sm + 2,
+    paddingVertical: 4,
+    borderRadius: borderRadius.full,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 242, 254, 0.35)',
+  },
+  profileBadgeText: {
     fontSize: 11,
     fontWeight: '700',
     color: colors.accent,
