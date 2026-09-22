@@ -8,11 +8,15 @@ import {
   TouchableOpacity,
   Alert,
   Keyboard,
+  Share,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import * as Haptics from 'expo-haptics';
 import { useAuth } from '../context/AuthContext';
+import { useJam } from '../context/JamContext';
+import { useToast } from '../context/ToastContext';
 import { MiniPlayer } from '../components/MiniPlayer';
 import { colors, spacing, borderRadius, typography, shadows } from '../theme';
 import type { Friend } from '../types';
@@ -45,6 +49,8 @@ export default function FriendsScreen() {
   const [isAdding, setIsAdding] = useState(false);
   const router = useRouter();
   const { fullTag } = useAuth();
+  const { isInRoom, roomId, createRoom } = useJam();
+  const { showToast } = useToast();
 
   // Load saved friends on mount
   useEffect(() => {
@@ -150,8 +156,35 @@ export default function FriendsScreen() {
   };
 
   // Invite friend to Jam
-  const handleInvite = (_friend: Friend) => {
-    router.push('/(tabs)/jam');
+  const handleInvite = async (friend: Friend) => {
+    if (isInRoom && roomId) {
+      try {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        await Share.share({
+          message: `Hey ${friend.username}! Join my live Jam music room '${roomId}' to listen together in sync! 🎧\n\nRoom code: ${roomId}`,
+          title: `Jam Invite for ${friend.username}`,
+        });
+        showToast(`Invite sent to ${friend.username}!`, 'success');
+      } catch (err) {
+        console.warn('[Friends] Share error:', err);
+      }
+    } else {
+      Alert.alert(
+        'Create a Jam Room',
+        `Start a Jam room to listen together with ${friend.username}?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Start Jam Room',
+            onPress: () => {
+              createRoom();
+              router.push('/(tabs)/jam');
+              showToast(`Room created! Ready to invite ${friend.username}`, 'info');
+            },
+          },
+        ]
+      );
+    }
   };
 
   // Filtered friends list
@@ -189,6 +222,30 @@ export default function FriendsScreen() {
           />
         </TouchableOpacity>
       </View>
+
+      {/* Live Jam Room Banner */}
+      {isInRoom && roomId ? (
+        <TouchableOpacity
+          style={styles.liveRoomBanner}
+          activeOpacity={0.8}
+          onPress={() => router.push('/(tabs)/jam')}
+        >
+          <View style={styles.liveBannerLeft}>
+            <View style={styles.liveDot} />
+            <Text style={styles.liveBannerTitle}>
+              Active Jam Room: <Text style={styles.liveBannerCode}>{roomId}</Text>
+            </Text>
+          </View>
+          <Text style={styles.liveBannerHint}>Tap 'Invite' on any friend ➔</Text>
+        </TouchableOpacity>
+      ) : (
+        <View style={styles.emptySessionBanner}>
+          <Ionicons name="radio" size={14} color={colors.accent} />
+          <Text style={styles.emptySessionText}>
+            Tap "Invite" on any friend to start listening together!
+          </Text>
+        </View>
+      )}
 
       {/* Add friend input card */}
       {isAdding && (
@@ -586,5 +643,61 @@ const styles = StyleSheet.create({
   noResultsText: {
     fontSize: typography.sizes.sm,
     color: colors.textSecondary,
+  },
+  liveRoomBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(184, 166, 224, 0.12)',
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm + 2,
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: colors.accent,
+  },
+  liveBannerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs + 2,
+  },
+  liveDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.online,
+  },
+  liveBannerTitle: {
+    fontSize: typography.sizes.xs,
+    fontWeight: typography.weights.semibold,
+    color: colors.textPrimary,
+  },
+  liveBannerCode: {
+    color: colors.accent,
+    fontWeight: typography.weights.bold,
+  },
+  liveBannerHint: {
+    fontSize: 11,
+    color: colors.accent,
+    fontWeight: '600',
+  },
+  emptySessionBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.backgroundElevated,
+    marginHorizontal: spacing.lg,
+    marginBottom: spacing.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: borderRadius.md,
+    gap: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.divider,
+  },
+  emptySessionText: {
+    fontSize: typography.sizes.xs,
+    color: colors.textSecondary,
+    flex: 1,
   },
 });

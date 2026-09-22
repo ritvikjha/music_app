@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { useJam } from '../context/JamContext';
 import { usePlayer } from '../context/PlayerContext';
@@ -27,7 +28,7 @@ import { MiniPlayer } from '../components/MiniPlayer';
 import { SkeletonList } from '../components/Skeleton';
 import { AnimatedEqualizer } from '../components/AnimatedEqualizer';
 import { colors, spacing, borderRadius, typography, shadows } from '../theme';
-import type { Song } from '../types';
+import type { Song, Friend } from '../types';
 
 /**
  * Jam Room screen — create/join rooms, shared synchronized playback,
@@ -58,6 +59,24 @@ export default function JamRoomScreen() {
   // Tab: queue vs chat
   const [jamTab, setJamTab] = useState<'queue' | 'chat'>('queue');
   const [chatInput, setChatInput] = useState('');
+
+  // Saved friends for in-room quick invite
+  const [savedFriends, setSavedFriends] = useState<Friend[]>([]);
+  const [invitedFriends, setInvitedFriends] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    if (isInRoom) {
+      (async () => {
+        try {
+          const stored = await AsyncStorage.getItem('@jam_friends_list');
+          if (stored) {
+            const parsed = JSON.parse(stored);
+            if (Array.isArray(parsed)) setSavedFriends(parsed);
+          }
+        } catch {}
+      })();
+    }
+  }, [isInRoom]);
 
   // Join room input
   const [joinCode, setJoinCode] = useState('');
@@ -222,6 +241,26 @@ export default function JamRoomScreen() {
     sendReaction(emoji);
     showToast(`Reacted ${emoji}`, 'info');
   };
+
+  const handleQuickInviteFriend = useCallback(
+    async (friend: Friend) => {
+      if (!roomId) return;
+      try {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      } catch {}
+      try {
+        await Share.share({
+          message: `Hey ${friend.username}! Join my live Jam session on our music app! 🎵 Enter room code: ${roomId}`,
+          title: `Jam Room Invite for ${friend.username}`,
+        });
+        setInvitedFriends((prev) => ({ ...prev, [friend.id]: true }));
+        showToast(`Invite shared for ${friend.username}!`, 'success');
+      } catch (e) {
+        console.error('Invite share error:', e);
+      }
+    },
+    [roomId, showToast]
+  );
 
   const currentUsername = user?.username ?? '';
 
@@ -388,6 +427,59 @@ export default function JamRoomScreen() {
             </TouchableOpacity>
           ))}
         </View>
+
+        {/* Quick Invite Saved Friends (Option 3) */}
+        {savedFriends.length > 0 && (
+          <View style={styles.quickInviteSection}>
+            <View style={styles.quickInviteHeader}>
+              <View style={styles.quickInviteHeaderLeft}>
+                <Ionicons name="people" size={14} color={colors.accent} />
+                <Text style={styles.quickInviteTitle}>Invite Saved Friends</Text>
+              </View>
+              <Text style={styles.quickInviteSub}>1-Tap Invite</Text>
+            </View>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.quickInviteScroll}
+            >
+              {savedFriends.map((friend) => {
+                const isInvited = invitedFriends[friend.id];
+                return (
+                  <View key={friend.id} style={styles.quickFriendCard}>
+                    <View style={styles.quickFriendAvatar}>
+                      <Text style={styles.quickFriendAvatarText}>
+                        {friend.username.charAt(0).toUpperCase()}
+                      </Text>
+                    </View>
+                    <Text style={styles.quickFriendName} numberOfLines={1}>
+                      {friend.username}
+                    </Text>
+                    <TouchableOpacity
+                      style={[styles.quickInviteBtn, isInvited && styles.quickInviteBtnDone]}
+                      activeOpacity={0.7}
+                      onPress={() => handleQuickInviteFriend(friend)}
+                    >
+                      <Ionicons
+                        name={isInvited ? 'checkmark' : 'paper-plane'}
+                        size={10}
+                        color={isInvited ? colors.accent : colors.background}
+                      />
+                      <Text
+                        style={[
+                          styles.quickInviteBtnText,
+                          isInvited && styles.quickInviteBtnTextDone,
+                        ]}
+                      >
+                        {isInvited ? 'Sent' : 'Invite'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                );
+              })}
+            </ScrollView>
+          </View>
+        )}
 
         {/* Segmented Control: Queue vs Chat */}
         <View style={styles.segmentedControl}>
@@ -1143,5 +1235,99 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accent,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  quickInviteSection: {
+    marginBottom: spacing.md,
+    backgroundColor: colors.backgroundElevated,
+    borderRadius: borderRadius.lg,
+    padding: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.accentAlpha25,
+  },
+  quickInviteHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: spacing.xs,
+    marginBottom: spacing.xs,
+  },
+  quickInviteHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  quickInviteTitle: {
+    fontSize: typography.sizes.xs,
+    fontWeight: '700',
+    color: colors.textPrimary,
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+  },
+  quickInviteSub: {
+    fontSize: 10,
+    color: colors.accent,
+    fontWeight: '600',
+  },
+  quickInviteScroll: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  quickFriendCard: {
+    alignItems: 'center',
+    backgroundColor: colors.background,
+    borderRadius: borderRadius.md,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    width: 86,
+    borderWidth: 1,
+    borderColor: colors.divider,
+  },
+  quickFriendAvatar: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: colors.accentAlpha10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+    borderWidth: 1,
+    borderColor: colors.accentAlpha25,
+  },
+  quickFriendAvatarText: {
+    fontSize: typography.sizes.sm,
+    fontWeight: '700',
+    color: colors.accent,
+  },
+  quickFriendName: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.textPrimary,
+    marginBottom: 6,
+    textAlign: 'center',
+  },
+  quickInviteBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 3,
+    backgroundColor: colors.accent,
+    borderRadius: borderRadius.full,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    width: '100%',
+  },
+  quickInviteBtnDone: {
+    backgroundColor: colors.accentAlpha10,
+    borderWidth: 1,
+    borderColor: colors.accentAlpha25,
+  },
+  quickInviteBtnText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: colors.background,
+  },
+  quickInviteBtnTextDone: {
+    color: colors.accent,
   },
 });
