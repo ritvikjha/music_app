@@ -43,7 +43,7 @@ import type {
 } from '../types';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const TURNTABLE_SIZE = Math.min(SCREEN_WIDTH - 48, 290);
+const TURNTABLE_SIZE = Math.min(SCREEN_WIDTH - 48, 280);
 const STORAGE_KEY = '@jam_friends_list';
 
 const QUICK_ROASTS = [
@@ -84,7 +84,7 @@ export default function GamesScreen() {
   const [newPlayerInput, setNewPlayerInput] = useState('');
   const [editingPlayerIndex, setEditingPlayerIndex] = useState<number | null>(null);
   const [editingPlayerName, setEditingPlayerName] = useState('');
-  const [showRosterModal, setShowRosterModal] = useState(false);
+  const [showAddFriendModal, setShowAddFriendModal] = useState(false);
 
   // Party Chat State
   const [showChatModal, setShowChatModal] = useState(false);
@@ -154,7 +154,6 @@ export default function GamesScreen() {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
           setSavedFriends(parsed);
-          // If we had a friend saved, set them as Player 2 by default
           if (parsed.length > 0) {
             setRoster((prev) => [prev[0] || myName, parsed[0].username]);
             setPlayerLives((prev) => ({
@@ -181,32 +180,6 @@ export default function GamesScreen() {
     });
     return () => bottleAngleAnim.removeListener(id);
   }, [bottleAngleAnim]);
-
-  // ─── Quick Player Count Switcher ────────────────────────────────────────────
-  const setPlayerCount = (count: number) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    let updated: string[] = [];
-    if (count === 2) {
-      updated = [roster[0] || myName, roster[1] || 'Player 2'];
-    } else if (count === 3) {
-      const third = savedFriends[1]?.username || 'Player 3';
-      updated = [roster[0] || myName, roster[1] || 'Player 2', roster[2] || third];
-    } else if (count === 4) {
-      const third = savedFriends[1]?.username || 'Player 3';
-      const fourth = savedFriends[2]?.username || 'Player 4';
-      updated = [roster[0] || myName, roster[1] || 'Player 2', roster[2] || third, roster[3] || fourth];
-    }
-    setRoster(updated);
-    setPlayerLives((prev) => {
-      const nextMap = { ...prev };
-      updated.forEach((p) => {
-        if (nextMap[p] === undefined) nextMap[p] = 5;
-      });
-      return nextMap;
-    });
-    setChosenPlayerIndex(null);
-    showToast(`Set to ${count} Players (${count === 2 ? 'Duo Mode' : 'Party'})`);
-  };
 
   // ─── Countdown Timer Effect ─────────────────────────────────────────────────
   useEffect(() => {
@@ -646,7 +619,7 @@ export default function GamesScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
-  const handleAddPlayer = (nameToAdd?: string) => {
+  const handleAddPlayerSubmit = (nameToAdd?: string) => {
     const name = (nameToAdd || newPlayerInput).trim();
     if (!name) return;
     if (roster.includes(name)) {
@@ -657,13 +630,14 @@ export default function GamesScreen() {
     setRoster(updated);
     setPlayerLives((prev) => ({ ...prev, [name]: 5 }));
     setNewPlayerInput('');
+    setShowAddFriendModal(false);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     showToast(`Added ${name} to game!`);
   };
 
   const handleRemovePlayer = (name: string) => {
     if (roster.length <= 2) {
-      showToast('Minimum 2 players needed for duel');
+      showToast('Minimum 2 players needed for game');
       return;
     }
     const updated = roster.filter((p) => p !== name);
@@ -688,7 +662,7 @@ export default function GamesScreen() {
         </View>
       )}
 
-      {/* ─── Room Connection / Sync Header ───────────────────────────────── */}
+      {/* ─── Room Connection & Top Chat Header ───────────────────────────── */}
       <View style={styles.header}>
         {isInRoom ? (
           <View style={styles.roomSyncPill}>
@@ -698,112 +672,113 @@ export default function GamesScreen() {
                 ROOM <Text style={styles.roomCodeHighlight}>#{roomId}</Text>
               </Text>
               <Text style={styles.memberCountBadge}>{memberCount || 1} online</Text>
-              <Ionicons name="copy-outline" size={14} color={colors.accent} style={{ marginLeft: 4 }} />
+              <Ionicons name="copy-outline" size={13} color={colors.accent} style={{ marginLeft: 4 }} />
             </TouchableOpacity>
 
             <TouchableOpacity onPress={handleShareRoom} style={styles.iconButton}>
-              <Ionicons name="share-social-outline" size={18} color={colors.accent} />
+              <Ionicons name="share-social-outline" size={16} color={colors.accent} />
             </TouchableOpacity>
 
             <TouchableOpacity onPress={leaveRoom} style={styles.iconButtonDestructive}>
-              <Ionicons name="close" size={18} color="#FF4D6D" />
+              <Ionicons name="close" size={16} color="#FF4D6D" />
             </TouchableOpacity>
           </View>
         ) : (
           <View style={styles.offlineSyncRow}>
-            <View style={styles.offlineTextWrap}>
-              <View style={styles.yellowDot} />
-              <Text style={styles.offlineTitle}>PASS & PLAY</Text>
-            </View>
-            <View style={styles.offlineActions}>
-              <TouchableOpacity
-                style={styles.connectButton}
-                onPress={() => setShowJoinModal(true)}
-                activeOpacity={0.8}
-              >
-                <Ionicons name="flash" size={13} color="#050508" />
-                <Text style={styles.connectButtonText}>CONNECT SQUAD</Text>
-              </TouchableOpacity>
-            </View>
+            <View style={styles.yellowDot} />
+            <Text style={styles.offlineTitle}>PASS & PLAY</Text>
+            <TouchableOpacity
+              style={styles.connectButton}
+              onPress={() => setShowJoinModal(true)}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="flash" size={12} color="#050508" />
+              <Text style={styles.connectButtonText}>CONNECT ONLINE</Text>
+            </TouchableOpacity>
           </View>
         )}
 
-        {/* Player Count Selector & Prominent Add Button */}
-        <View style={styles.playerCountPills}>
-          <TouchableOpacity
-            style={[styles.countPill, isDuoMode && styles.countPillActive]}
-            onPress={() => setPlayerCount(2)}
-            activeOpacity={0.8}
-          >
-            <Text style={[styles.countPillText, isDuoMode && styles.countPillTextActive]}>
-              2P (Duo)
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.countPill, roster.length === 3 && styles.countPillActive]}
-            onPress={() => setPlayerCount(3)}
-            activeOpacity={0.8}
-          >
-            <Text style={[styles.countPillText, roster.length === 3 && styles.countPillTextActive]}>
-              3P
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.countPill, roster.length >= 4 && styles.countPillActive]}
-            onPress={() => {
-              if (roster.length < 4) setPlayerCount(4);
-              else setShowRosterModal(true);
-            }}
-            activeOpacity={0.8}
-          >
-            <Text style={[styles.countPillText, roster.length >= 4 && styles.countPillTextActive]}>
-              {roster.length >= 4 ? `${roster.length}P` : '4P'}
-            </Text>
-          </TouchableOpacity>
-
-          {/* Prominent + Add Friend Button */}
-          <TouchableOpacity
-            style={styles.addFriendTopBtn}
-            onPress={() => setShowRosterModal(true)}
-            activeOpacity={0.8}
-          >
-            <Ionicons name="person-add" size={13} color="#050508" />
-            <Text style={styles.addFriendTopBtnText}>+ ADD</Text>
-          </TouchableOpacity>
-        </View>
+        {/* Top-Right Party Chat Button (ALWAYS VISIBLE & NEVER COVERED BY TABS) */}
+        <TouchableOpacity
+          style={styles.topChatButton}
+          onPress={() => setShowChatModal(true)}
+          activeOpacity={0.85}
+        >
+          <Ionicons name="chatbubble-ellipses" size={16} color="#00F2FE" />
+          <Text style={styles.topChatButtonText}>CHAT</Text>
+          {messages.length > 0 && (
+            <View style={styles.topChatBadge}>
+              <Text style={styles.topChatBadgeText}>{messages.length}</Text>
+            </View>
+          )}
+        </TouchableOpacity>
       </View>
 
-      {/* ─── Duo Mode Alert Pill & Quick Add 3rd ──────────────────────────── */}
-      {isDuoMode && (
-        <View style={styles.duoBanner}>
-          <Text style={styles.duoBannerText}>
-            ⚡ <Text style={{ color: '#00F2FE', fontWeight: '900' }}>{player1}</Text> VS{' '}
-            <Text style={{ color: '#FF007F', fontWeight: '900' }}>{player2}</Text>
+      {/* ─── Clear & Simple Player Strip Right Below Header ───────────────── */}
+      <View style={styles.playerStrip}>
+        <View style={styles.playerStripHeader}>
+          <Text style={styles.playerStripTitle}>
+            PLAYERS IN GAME ({roster.length}):
           </Text>
-          <View style={styles.duoActionsRight}>
-            <TouchableOpacity
-              onPress={() => {
-                setEditingPlayerIndex(1);
-                setEditingPlayerName(player2);
-              }}
-              style={styles.renameLink}
-            >
-              <Ionicons name="pencil" size={11} color={colors.accent} />
-              <Text style={styles.renameLinkText}>Rename</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              onPress={() => setShowRosterModal(true)}
-              style={styles.addThirdPill}
-            >
-              <Ionicons name="add" size={12} color="#FFE600" />
-              <Text style={styles.addThirdPillText}>Add 3rd</Text>
-            </TouchableOpacity>
-          </View>
+          <Text style={styles.playerStripHint}>Tap name to edit</Text>
         </View>
-      )}
+
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.playerChipsRow}
+        >
+          {roster.map((player, idx) => {
+            const isMe = idx === 0;
+            return (
+              <View
+                key={player + idx}
+                style={[styles.playerChip, isMe ? styles.playerChipMe : styles.playerChipFriend]}
+              >
+                <View style={styles.playerChipAvatar}>
+                  <Text style={styles.playerChipAvatarText}>
+                    {player.charAt(0).toUpperCase()}
+                  </Text>
+                </View>
+
+                <TouchableOpacity
+                  onPress={() => {
+                    setEditingPlayerIndex(idx);
+                    setEditingPlayerName(player);
+                  }}
+                  style={styles.playerChipNameWrap}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.playerChipName} numberOfLines={1}>
+                    {player}
+                  </Text>
+                  <Ionicons name="pencil" size={10} color={colors.textSecondary} style={{ marginLeft: 3 }} />
+                </TouchableOpacity>
+
+                {roster.length > 2 && !isMe && (
+                  <TouchableOpacity
+                    onPress={() => handleRemovePlayer(player)}
+                    style={styles.playerChipRemove}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Ionicons name="close-circle" size={14} color="#FF4D6D" />
+                  </TouchableOpacity>
+                )}
+              </View>
+            );
+          })}
+
+          {/* Prominent Glowing Add Friend Chip */}
+          <TouchableOpacity
+            style={styles.addFriendChip}
+            onPress={() => setShowAddFriendModal(true)}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="person-add" size={14} color="#050508" />
+            <Text style={styles.addFriendChipText}>+ ADD FRIEND</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </View>
 
       {/* ─── Game Mode Tabs ──────────────────────────────────────────────── */}
       <View style={styles.modeTabBar}>
@@ -864,9 +839,26 @@ export default function GamesScreen() {
         </TouchableOpacity>
       </View>
 
+      {/* ─── In-Line Quick Emoji Blast Strip (Never Covered By Tabs) ─────── */}
+      <View style={styles.emojiStripRow}>
+        <Text style={styles.emojiStripLabel}>BLAST:</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.emojiStripContent}>
+          {['🔥', '😂', '💀', '😱', '👏', '🍾'].map((emoji) => (
+            <TouchableOpacity
+              key={emoji}
+              style={styles.emojiStripBtn}
+              onPress={() => handleSendEmojiBlast(emoji)}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.emojiStripText}>{emoji}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
+
       {/* ─── Main Game Canvas ────────────────────────────────────────────── */}
       <ScrollView
-        contentContainerStyle={[styles.scrollContent, { paddingBottom: 150 }]}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: 110 }]}
         showsVerticalScrollIndicator={false}
       >
         {/* ══════════════════════════════════════════════════════════════════
@@ -1442,36 +1434,6 @@ export default function GamesScreen() {
         )}
       </ScrollView>
 
-      {/* ─── Floating Emoji Blast & Chat Bar ─────────────────────────────── */}
-      <View style={styles.floatingActionBar}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.emojiBlastRow}>
-          {['🔥', '😂', '💀', '😱', '👏', '🍾'].map((emoji) => (
-            <TouchableOpacity
-              key={emoji}
-              style={styles.emojiBlastBtn}
-              onPress={() => handleSendEmojiBlast(emoji)}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.emojiBlastText}>{emoji}</Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-
-        <TouchableOpacity
-          style={styles.chatFabBtn}
-          onPress={() => setShowChatModal(true)}
-          activeOpacity={0.85}
-        >
-          <Ionicons name="chatbubble-ellipses" size={18} color="#050508" />
-          <Text style={styles.chatFabText}>CHAT</Text>
-          {messages.length > 0 && (
-            <View style={styles.chatBadge}>
-              <Text style={styles.chatBadgeText}>{messages.length}</Text>
-            </View>
-          )}
-        </TouchableOpacity>
-      </View>
-
       {/* ─── Party Live Chat Modal ───────────────────────────────────────── */}
       <Modal visible={showChatModal} animationType="slide" transparent>
         <KeyboardAvoidingView
@@ -1558,6 +1520,74 @@ export default function GamesScreen() {
             </View>
           </View>
         </KeyboardAvoidingView>
+      </Modal>
+
+      {/* ─── Add Friend Simple Modal ─────────────────────────────────────── */}
+      <Modal visible={showAddFriendModal} transparent animationType="fade">
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>👥 ADD FRIEND TO GAME</Text>
+              <TouchableOpacity onPress={() => setShowAddFriendModal(false)}>
+                <Ionicons name="close" size={22} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.modalDescription}>
+              Enter friend's name to give them a seat in the game:
+            </Text>
+
+            <TextInput
+              style={styles.modalInput}
+              placeholder="Friend name (e.g. Alex, Jordan, Sarah)..."
+              placeholderTextColor="#64748B"
+              value={newPlayerInput}
+              onChangeText={setNewPlayerInput}
+              autoFocus
+              onSubmitEditing={() => handleAddPlayerSubmit()}
+            />
+
+            <TouchableOpacity
+              style={[styles.modalPrimaryAction, !newPlayerInput.trim() && { opacity: 0.5 }]}
+              onPress={() => handleAddPlayerSubmit()}
+              disabled={!newPlayerInput.trim()}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="person-add" size={18} color="#050508" />
+              <Text style={styles.modalPrimaryActionText}>ADD TO GAME</Text>
+            </TouchableOpacity>
+
+            {/* 1-Tap Quick Add from Squad */}
+            {savedFriends.length > 0 && (
+              <View style={styles.squadQuickAddWrap}>
+                <Text style={styles.sectionMiniHeading}>OR 1-TAP FROM SAVED SQUAD:</Text>
+                <View style={styles.squadPillRow}>
+                  {savedFriends.map((f) => {
+                    const alreadyIn = roster.includes(f.username);
+                    return (
+                      <TouchableOpacity
+                        key={f.username + f.tag}
+                        style={[styles.squadPill, alreadyIn && styles.squadPillDisabled]}
+                        onPress={() => {
+                          if (!alreadyIn) handleAddPlayerSubmit(f.username);
+                        }}
+                        disabled={alreadyIn}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={styles.squadPillText}>{f.username}</Text>
+                        <Ionicons
+                          name={alreadyIn ? 'checkmark-circle' : 'add-circle'}
+                          size={14}
+                          color={alreadyIn ? '#10B981' : colors.accent}
+                        />
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+            )}
+          </View>
+        </View>
       </Modal>
 
       {/* ─── Rename Player Modal ─────────────────────────────────────────── */}
@@ -1649,102 +1679,6 @@ export default function GamesScreen() {
         </View>
       </Modal>
 
-      {/* ─── Add Friend / Roster Modal ───────────────────────────────────── */}
-      <Modal visible={showRosterModal} transparent animationType="slide">
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>👥 ADD PLAYERS TO GAME</Text>
-              <TouchableOpacity onPress={() => setShowRosterModal(false)}>
-                <Ionicons name="close" size={22} color={colors.textSecondary} />
-              </TouchableOpacity>
-            </View>
-
-            {/* Quick 1-Tap Add From Saved Squad Friends */}
-            {savedFriends.length > 0 && (
-              <View style={styles.savedSquadSection}>
-                <Text style={styles.sectionMiniHeading}>QUICK ADD FROM YOUR SQUAD:</Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.savedFriendsRow}>
-                  {savedFriends.map((f) => {
-                    const alreadyIn = roster.includes(f.username);
-                    return (
-                      <TouchableOpacity
-                        key={f.username + f.tag}
-                        style={[styles.savedFriendChip, alreadyIn && styles.savedFriendChipIn]}
-                        onPress={() => {
-                          if (!alreadyIn) handleAddPlayer(f.username);
-                        }}
-                        disabled={alreadyIn}
-                        activeOpacity={0.8}
-                      >
-                        <Text style={styles.savedFriendText}>{f.username}</Text>
-                        <Ionicons
-                          name={alreadyIn ? 'checkmark-circle' : 'add-circle'}
-                          size={15}
-                          color={alreadyIn ? '#10B981' : colors.accent}
-                        />
-                      </TouchableOpacity>
-                    );
-                  })}
-                </ScrollView>
-              </View>
-            )}
-
-            <Text style={styles.sectionMiniHeading}>OR TYPE ANY FRIEND NAME:</Text>
-            <View style={styles.addPlayerRow}>
-              <TextInput
-                style={styles.addPlayerInput}
-                placeholder="Friend name (e.g. Jordan, Sarah)..."
-                placeholderTextColor="#64748B"
-                value={newPlayerInput}
-                onChangeText={setNewPlayerInput}
-                onSubmitEditing={() => handleAddPlayer()}
-              />
-              <TouchableOpacity style={styles.addPlayerBtn} onPress={() => handleAddPlayer()}>
-                <Ionicons name="add" size={22} color="#050508" />
-              </TouchableOpacity>
-            </View>
-
-            <Text style={styles.sectionMiniHeading}>CURRENT PLAYERS IN GAME ({roster.length}):</Text>
-            <ScrollView style={{ maxHeight: 180 }}>
-              {roster.map((player, idx) => (
-                <View key={player + idx} style={styles.rosterItem}>
-                  <View style={styles.rosterAvatar}>
-                    <Text style={styles.rosterAvatarText}>{player.charAt(0).toUpperCase()}</Text>
-                  </View>
-                  <Text style={styles.rosterItemName}>{player}</Text>
-
-                  <View style={styles.rosterActions}>
-                    <TouchableOpacity
-                      onPress={() => {
-                        setEditingPlayerIndex(idx);
-                        setEditingPlayerName(player);
-                      }}
-                      style={{ marginRight: 10 }}
-                    >
-                      <Ionicons name="pencil-outline" size={18} color={colors.accent} />
-                    </TouchableOpacity>
-
-                    {player !== myName && (
-                      <TouchableOpacity onPress={() => handleRemovePlayer(player)}>
-                        <Ionicons name="trash-outline" size={18} color="#FF4D6D" />
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                </View>
-              ))}
-            </ScrollView>
-
-            <TouchableOpacity
-              style={[styles.modalPrimaryAction, { marginTop: 14 }]}
-              onPress={() => setShowRosterModal(false)}
-            >
-              <Text style={styles.modalPrimaryActionText}>DONE</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-
       {/* ─── Anchored MiniPlayer ─────────────────────────────────────────── */}
       <MiniPlayer />
     </View>
@@ -1778,12 +1712,14 @@ const styles = StyleSheet.create({
     fontSize: 12,
     letterSpacing: 0.3,
   },
+
+  // Header Row
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: spacing.md,
-    paddingVertical: 10,
+    paddingVertical: 8,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255, 255, 255, 0.06)',
   },
@@ -1791,25 +1727,25 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: 'rgba(0, 242, 254, 0.1)',
-    borderRadius: 20,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    borderRadius: 18,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
     borderWidth: 1,
     borderColor: 'rgba(0, 242, 254, 0.3)',
   },
   onlineDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
     backgroundColor: '#10B981',
-    marginRight: 6,
+    marginRight: 5,
   },
   yellowDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
     backgroundColor: '#FFE600',
-    marginRight: 6,
+    marginRight: 5,
   },
   roomCodeTouch: {
     flexDirection: 'row',
@@ -1828,21 +1764,17 @@ const styles = StyleSheet.create({
     color: '#10B981',
     fontSize: 10,
     fontWeight: '700',
-    marginLeft: 6,
+    marginLeft: 5,
   },
   iconButton: {
-    marginLeft: 8,
+    marginLeft: 6,
     padding: 2,
   },
   iconButtonDestructive: {
-    marginLeft: 6,
+    marginLeft: 4,
     padding: 2,
   },
   offlineSyncRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  offlineTextWrap: {
     flexDirection: 'row',
     alignItems: 'center',
   },
@@ -1852,17 +1784,15 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 0.5,
   },
-  offlineActions: {
-    marginLeft: 8,
-  },
   connectButton: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: colors.accent,
-    borderRadius: 12,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    borderRadius: 10,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
     gap: 3,
+    marginLeft: 8,
   },
   connectButtonText: {
     color: '#050508',
@@ -1871,100 +1801,141 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
   },
 
-  playerCountPills: {
+  // Top-Right Chat Button
+  topChatButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-  },
-  countPill: {
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-    borderRadius: 12,
-    paddingHorizontal: 8,
+    backgroundColor: 'rgba(0, 242, 254, 0.12)',
+    borderRadius: 16,
+    paddingHorizontal: 10,
     paddingVertical: 5,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
-  },
-  countPillActive: {
-    backgroundColor: 'rgba(0, 242, 254, 0.15)',
     borderColor: '#00F2FE',
+    gap: 4,
   },
-  countPillText: {
-    color: colors.textSecondary,
-    fontSize: 10,
-    fontWeight: '700',
-  },
-  countPillTextActive: {
+  topChatButtonText: {
     color: '#00F2FE',
+    fontSize: 11,
     fontWeight: '900',
+    letterSpacing: 0.5,
   },
-  addFriendTopBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFE600',
-    borderRadius: 12,
-    paddingHorizontal: 8,
-    paddingVertical: 5,
-    gap: 3,
+  topChatBadge: {
+    backgroundColor: '#FF007F',
+    borderRadius: 8,
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    marginLeft: 2,
   },
-  addFriendTopBtnText: {
-    color: '#050508',
-    fontSize: 10,
+  topChatBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 9,
     fontWeight: '900',
   },
 
-  duoBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: 'rgba(18, 18, 30, 0.8)',
-    paddingHorizontal: spacing.lg,
-    paddingVertical: 6,
+  // Player Strip Below Header
+  playerStrip: {
+    backgroundColor: 'rgba(18, 18, 30, 0.75)',
+    paddingVertical: 8,
+    paddingHorizontal: spacing.md,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255, 255, 255, 0.05)',
   },
-  duoBannerText: {
+  playerStripHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  playerStripTitle: {
+    color: colors.textSecondary,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  playerStripHint: {
+    color: '#64748B',
+    fontSize: 9,
+    fontWeight: '600',
+  },
+  playerChipsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  playerChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1E1E2F',
+    borderRadius: 16,
+    paddingVertical: 4,
+    paddingLeft: 4,
+    paddingRight: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  playerChipMe: {
+    borderColor: '#00F2FE',
+    backgroundColor: 'rgba(0, 242, 254, 0.08)',
+  },
+  playerChipFriend: {
+    borderColor: '#FF007F',
+    backgroundColor: 'rgba(255, 0, 127, 0.08)',
+  },
+  playerChipAvatar: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: '#2A2A3E',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 6,
+  },
+  playerChipAvatarText: {
     color: colors.textPrimary,
-    fontSize: 12,
-    fontWeight: '700',
+    fontWeight: '900',
+    fontSize: 10,
   },
-  duoActionsRight: {
+  playerChipNameWrap: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    maxWidth: 90,
   },
-  renameLink: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-  },
-  renameLinkText: {
-    color: colors.accent,
+  playerChipName: {
+    color: colors.textPrimary,
     fontSize: 11,
     fontWeight: '700',
   },
-  addThirdPill: {
+  playerChipRemove: {
+    marginLeft: 6,
+    padding: 1,
+  },
+  addFriendChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 230, 0, 0.15)',
-    borderRadius: 10,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 230, 0, 0.3)',
-    gap: 2,
+    backgroundColor: '#FFE600',
+    borderRadius: 16,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    gap: 5,
+    shadowColor: '#FFE600',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.5,
+    shadowRadius: 4,
+    elevation: 3,
   },
-  addThirdPillText: {
-    color: '#FFE600',
-    fontSize: 10,
-    fontWeight: '800',
+  addFriendChipText: {
+    color: '#050508',
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 0.3,
   },
 
-  // Mode Tab Bar
+  // Game Mode Tabs
   modeTabBar: {
     flexDirection: 'row',
     paddingHorizontal: spacing.md,
-    paddingVertical: 8,
-    gap: 6,
+    paddingVertical: 6,
+    gap: 5,
   },
   modeTab: {
     flex: 1,
@@ -1972,12 +1943,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(255, 255, 255, 0.04)',
-    borderRadius: 12,
-    paddingVertical: 8,
-    paddingHorizontal: 4,
+    borderRadius: 10,
+    paddingVertical: 7,
+    paddingHorizontal: 3,
     borderWidth: 1,
     borderColor: 'transparent',
-    gap: 4,
+    gap: 3,
   },
   modeTabActiveBottle: {
     backgroundColor: 'rgba(0, 242, 254, 0.12)',
@@ -1996,7 +1967,7 @@ const styles = StyleSheet.create({
     borderColor: '#FFE600',
   },
   modeTabIcon: {
-    fontSize: 14,
+    fontSize: 13,
   },
   modeTabLabel: {
     fontSize: 10,
@@ -2009,9 +1980,38 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
 
+  // Emoji Strip Row
+  emojiStripRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.md,
+    paddingVertical: 4,
+  },
+  emojiStripLabel: {
+    color: '#64748B',
+    fontSize: 9,
+    fontWeight: '800',
+    marginRight: 6,
+    letterSpacing: 0.5,
+  },
+  emojiStripContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  emojiStripBtn: {
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  emojiStripText: {
+    fontSize: 15,
+  },
+
   scrollContent: {
     paddingHorizontal: spacing.lg,
-    paddingTop: 8,
+    paddingTop: 6,
   },
 
   // Mode 1: Bottle Styles
@@ -2026,7 +2026,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     position: 'relative',
-    marginVertical: 12,
+    marginVertical: 10,
     borderWidth: 2,
     borderColor: 'rgba(0, 242, 254, 0.2)',
   },
@@ -2041,18 +2041,18 @@ const styles = StyleSheet.create({
   },
   turntableRingInner: {
     position: 'absolute',
-    width: 90,
-    height: 90,
-    borderRadius: 45,
+    width: 85,
+    height: 85,
+    borderRadius: 42.5,
     backgroundColor: 'rgba(0, 242, 254, 0.05)',
     borderWidth: 1,
     borderColor: 'rgba(0, 242, 254, 0.15)',
   },
   playerNode: {
     position: 'absolute',
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
     backgroundColor: '#1E1E2F',
     justifyContent: 'center',
     alignItems: 'center',
@@ -2080,7 +2080,7 @@ const styles = StyleSheet.create({
   playerAvatarLetter: {
     color: colors.textPrimary,
     fontWeight: '900',
-    fontSize: 14,
+    fontSize: 13,
   },
   playerNodeName: {
     position: 'absolute',
@@ -2102,8 +2102,8 @@ const styles = StyleSheet.create({
 
   // Bottle Graphic
   bottleWrapper: {
-    width: 36,
-    height: 125,
+    width: 34,
+    height: 120,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -2112,29 +2112,29 @@ const styles = StyleSheet.create({
     height: 0,
     borderLeftWidth: 5,
     borderRightWidth: 5,
-    borderBottomWidth: 10,
+    borderBottomWidth: 9,
     borderLeftColor: 'transparent',
     borderRightColor: 'transparent',
     borderBottomColor: '#FFE600',
     marginBottom: 2,
   },
   bottleCap: {
-    width: 14,
-    height: 12,
+    width: 13,
+    height: 11,
     backgroundColor: '#FFE600',
     borderRadius: 3,
     alignItems: 'center',
   },
   bottleNeck: {
-    width: 11,
-    height: 28,
+    width: 10,
+    height: 26,
     backgroundColor: 'rgba(0, 242, 254, 0.65)',
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.3)',
   },
   bottleBody: {
-    width: 34,
-    height: 56,
+    width: 32,
+    height: 52,
     backgroundColor: 'rgba(0, 180, 216, 0.85)',
     borderRadius: 8,
     borderWidth: 1.5,
@@ -2149,11 +2149,11 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   bottleBase: {
-    width: 30,
-    height: 8,
+    width: 28,
+    height: 7,
     backgroundColor: 'rgba(0, 150, 180, 0.95)',
-    borderBottomLeftRadius: 6,
-    borderBottomRightRadius: 6,
+    borderBottomLeftRadius: 5,
+    borderBottomRightRadius: 5,
   },
 
   spinButton: {
@@ -2161,9 +2161,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: colors.accent,
-    borderRadius: 24,
-    paddingVertical: 14,
-    paddingHorizontal: 28,
+    borderRadius: 22,
+    paddingVertical: 13,
+    paddingHorizontal: 24,
     gap: 8,
     shadowColor: colors.accent,
     shadowOffset: { width: 0, height: 4 },
@@ -2171,7 +2171,7 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     elevation: 8,
     width: '100%',
-    marginTop: 6,
+    marginTop: 4,
   },
   spinButtonDisabled: {
     opacity: 0.7,
@@ -2182,12 +2182,12 @@ const styles = StyleSheet.create({
   spinButtonText: {
     color: '#050508',
     fontWeight: '900',
-    fontSize: 14,
+    fontSize: 13,
     letterSpacing: 0.5,
   },
 
   chosenPlayerBanner: {
-    marginTop: 14,
+    marginTop: 12,
     alignItems: 'center',
   },
   chosenSubtitle: {
@@ -2198,7 +2198,7 @@ const styles = StyleSheet.create({
   },
   chosenPlayerTitle: {
     color: '#FFE600',
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: '900',
     marginTop: 2,
     letterSpacing: 0.5,
@@ -2206,29 +2206,29 @@ const styles = StyleSheet.create({
 
   deckSelectorSection: {
     width: '100%',
-    marginTop: 14,
+    marginTop: 12,
   },
   deckSelectorHeading: {
     color: colors.textSecondary,
     fontSize: 10,
     fontWeight: '800',
     letterSpacing: 0.8,
-    marginBottom: 8,
+    marginBottom: 6,
   },
   deckRow: {
-    gap: 8,
+    gap: 7,
     paddingBottom: 4,
   },
   deckChip: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: 'rgba(255, 255, 255, 0.04)',
-    borderRadius: 14,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
+    borderRadius: 12,
+    paddingVertical: 7,
+    paddingHorizontal: 11,
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.1)',
-    gap: 6,
+    gap: 5,
   },
   deckChipText: {
     color: colors.textSecondary,
@@ -2239,8 +2239,8 @@ const styles = StyleSheet.create({
   truthDareButtonRow: {
     flexDirection: 'row',
     width: '100%',
-    gap: 12,
-    marginTop: 16,
+    gap: 10,
+    marginTop: 14,
   },
   truthButton: {
     flex: 1,
@@ -2250,14 +2250,14 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 242, 254, 0.12)',
     borderWidth: 1.5,
     borderColor: '#00F2FE',
-    borderRadius: 18,
-    paddingVertical: 14,
-    gap: 8,
+    borderRadius: 16,
+    paddingVertical: 13,
+    gap: 7,
   },
   truthButtonText: {
     color: '#00F2FE',
     fontWeight: '900',
-    fontSize: 15,
+    fontSize: 14,
     letterSpacing: 1,
   },
   dareButton: {
@@ -2268,23 +2268,23 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 0, 127, 0.12)',
     borderWidth: 1.5,
     borderColor: '#FF007F',
-    borderRadius: 18,
-    paddingVertical: 14,
-    gap: 8,
+    borderRadius: 16,
+    paddingVertical: 13,
+    gap: 7,
   },
   dareButtonText: {
     color: '#FF007F',
     fontWeight: '900',
-    fontSize: 15,
+    fontSize: 14,
     letterSpacing: 1,
   },
 
   cardContainer: {
     width: '100%',
     backgroundColor: '#12121E',
-    borderRadius: 20,
+    borderRadius: 18,
     padding: spacing.lg,
-    marginTop: 16,
+    marginTop: 14,
     borderWidth: 1.5,
   },
   cardTruth: {
@@ -2303,7 +2303,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 12,
+    marginBottom: 10,
   },
   cardBadge: {
     borderRadius: 10,
@@ -2317,10 +2317,10 @@ const styles = StyleSheet.create({
   },
   cardPromptText: {
     color: colors.textPrimary,
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '700',
-    lineHeight: 24,
-    marginBottom: 16,
+    lineHeight: 22,
+    marginBottom: 14,
   },
   timerRow: {
     width: '100%',
@@ -2331,7 +2331,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: 'rgba(255, 255, 255, 0.06)',
     borderRadius: 12,
-    paddingVertical: 10,
+    paddingVertical: 9,
     gap: 6,
   },
   timerButtonRunning: {
@@ -2341,7 +2341,7 @@ const styles = StyleSheet.create({
   },
   timerButtonText: {
     color: colors.textPrimary,
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '800',
   },
 
@@ -2370,12 +2370,12 @@ const styles = StyleSheet.create({
   duoVoteHUD: {
     flexDirection: 'row',
     gap: 8,
-    marginBottom: 12,
+    marginBottom: 10,
   },
   duoVoteCard: {
     flex: 1,
     backgroundColor: '#10101C',
-    borderRadius: 14,
+    borderRadius: 12,
     padding: 8,
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.08)',
@@ -2384,7 +2384,7 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     fontSize: 11,
     fontWeight: '800',
-    marginBottom: 6,
+    marginBottom: 5,
     textAlign: 'center',
   },
   duoVoteRow: {
@@ -2415,9 +2415,9 @@ const styles = StyleSheet.create({
   },
 
   duoResultBanner: {
-    padding: 10,
+    padding: 9,
     borderRadius: 12,
-    marginBottom: 12,
+    marginBottom: 10,
     alignItems: 'center',
   },
   duoMatch: {
@@ -2439,7 +2439,7 @@ const styles = StyleSheet.create({
 
   wyrOptionCard: {
     backgroundColor: '#12121E',
-    borderRadius: 18,
+    borderRadius: 16,
     padding: spacing.lg,
     borderWidth: 1.5,
   },
@@ -2461,39 +2461,39 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 10,
+    marginBottom: 8,
   },
   optionPill: {
-    paddingHorizontal: 8,
+    paddingHorizontal: 7,
     paddingVertical: 3,
-    borderRadius: 8,
+    borderRadius: 7,
   },
   optionPillText: {
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: '900',
     letterSpacing: 0.5,
   },
   votedBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    gap: 3,
   },
   votedBadgeText: {
     color: colors.textPrimary,
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: '800',
   },
   wyrOptionText: {
     color: colors.textPrimary,
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '700',
-    lineHeight: 22,
+    lineHeight: 21,
   },
   wyrMeterContainer: {
-    marginTop: 14,
+    marginTop: 12,
   },
   meterTrack: {
-    height: 8,
+    height: 7,
     backgroundColor: 'rgba(255, 255, 255, 0.08)',
     borderRadius: 4,
     overflow: 'hidden',
@@ -2527,16 +2527,16 @@ const styles = StyleSheet.create({
   },
   vsBadge: {
     backgroundColor: '#050508',
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: 14,
+    paddingHorizontal: 11,
+    paddingVertical: 4,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.2)',
   },
   vsBadgeText: {
     color: '#FFE600',
     fontWeight: '900',
-    fontSize: 11,
+    fontSize: 10,
     letterSpacing: 1,
   },
   nextRoundButton: {
@@ -2544,9 +2544,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: colors.accent,
-    borderRadius: 20,
-    paddingVertical: 14,
-    marginTop: 18,
+    borderRadius: 18,
+    paddingVertical: 13,
+    marginTop: 16,
     gap: 6,
   },
   nextRoundButtonText: {
@@ -2563,41 +2563,41 @@ const styles = StyleSheet.create({
   duoLivesContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 14,
+    marginBottom: 12,
     gap: 6,
   },
   duoLifeCard: {
     flex: 1,
     backgroundColor: '#10101C',
-    borderRadius: 16,
-    padding: 12,
+    borderRadius: 14,
+    padding: 10,
     alignItems: 'center',
     borderWidth: 1.5,
     borderColor: 'rgba(255, 255, 255, 0.08)',
   },
   duoPlayerName: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '900',
-    marginBottom: 6,
+    marginBottom: 5,
   },
   duoHeartsRow: {
     flexDirection: 'row',
     gap: 2,
-    marginBottom: 4,
+    marginBottom: 3,
   },
   duoRemainingLives: {
     color: colors.textSecondary,
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: '800',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   duoIHaveBtn1: {
     backgroundColor: 'rgba(0, 242, 254, 0.15)',
     borderWidth: 1,
     borderColor: '#00F2FE',
-    borderRadius: 12,
-    paddingVertical: 8,
-    paddingHorizontal: 10,
+    borderRadius: 10,
+    paddingVertical: 7,
+    paddingHorizontal: 8,
     width: '100%',
     alignItems: 'center',
   },
@@ -2605,21 +2605,21 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 0, 127, 0.15)',
     borderWidth: 1,
     borderColor: '#FF007F',
-    borderRadius: 12,
-    paddingVertical: 8,
-    paddingHorizontal: 10,
+    borderRadius: 10,
+    paddingVertical: 7,
+    paddingHorizontal: 8,
     width: '100%',
     alignItems: 'center',
   },
   duoIHaveText: {
     color: colors.textPrimary,
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '900',
   },
   duoVsDivider: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
     backgroundColor: '#050508',
     justifyContent: 'center',
     alignItems: 'center',
@@ -2628,15 +2628,15 @@ const styles = StyleSheet.create({
   },
   duoVsText: {
     color: '#FFE600',
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: '900',
   },
 
   livesBoard: {
     backgroundColor: '#10101C',
-    borderRadius: 16,
-    padding: 12,
-    marginBottom: 14,
+    borderRadius: 14,
+    padding: 10,
+    marginBottom: 12,
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.06)',
   },
@@ -2645,16 +2645,16 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '800',
     letterSpacing: 0.8,
-    marginBottom: 8,
+    marginBottom: 6,
   },
   livesRow: {
-    gap: 8,
+    gap: 6,
   },
   playerLifeChip: {
     backgroundColor: '#1E1E2F',
-    borderRadius: 12,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
+    borderRadius: 10,
+    paddingHorizontal: 9,
+    paddingVertical: 7,
     alignItems: 'center',
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.1)',
@@ -2665,16 +2665,16 @@ const styles = StyleSheet.create({
   },
   playerLifeName: {
     color: colors.textPrimary,
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '700',
-    marginBottom: 4,
+    marginBottom: 3,
   },
   heartsRow: {
     flexDirection: 'row',
     gap: 2,
   },
   heartIcon: {
-    fontSize: 12,
+    fontSize: 11,
   },
   heartLost: {
     opacity: 0.3,
@@ -2683,19 +2683,19 @@ const styles = StyleSheet.create({
     color: '#FF4D6D',
     fontSize: 9,
     fontWeight: '900',
-    marginTop: 4,
+    marginTop: 3,
   },
 
   nhieCard: {
     backgroundColor: '#12121E',
-    borderRadius: 20,
-    padding: spacing.xl,
+    borderRadius: 18,
+    padding: spacing.lg,
     borderWidth: 1.5,
     borderColor: 'rgba(168, 85, 247, 0.4)',
-    marginVertical: 10,
+    marginVertical: 8,
   },
   nhieHeader: {
-    marginBottom: 10,
+    marginBottom: 8,
   },
   nhieSubtitle: {
     color: colors.textSecondary,
@@ -2705,64 +2705,64 @@ const styles = StyleSheet.create({
   },
   nhieLead: {
     color: '#A855F7',
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '900',
     letterSpacing: 0.5,
     marginTop: 2,
   },
   nhieStatementText: {
     color: colors.textPrimary,
-    fontSize: 17,
+    fontSize: 16,
     fontWeight: '700',
-    lineHeight: 25,
+    lineHeight: 23,
   },
   nhieActionsRow: {
-    marginTop: 6,
+    marginTop: 4,
   },
   innocentButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(0, 242, 254, 0.08)',
-    borderRadius: 16,
-    paddingVertical: 12,
+    borderRadius: 14,
+    paddingVertical: 11,
     borderWidth: 1.5,
     borderColor: '#00F2FE',
     gap: 6,
   },
   innocentButtonText: {
     color: '#00F2FE',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '900',
   },
   nhieBottomControls: {
-    marginTop: 14,
-    gap: 10,
+    marginTop: 12,
+    gap: 8,
   },
   nhieNextButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: colors.accent,
-    borderRadius: 18,
-    paddingVertical: 14,
+    borderRadius: 16,
+    paddingVertical: 13,
     gap: 6,
   },
   nhieNextText: {
     color: '#050508',
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '900',
   },
   resetButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 8,
+    paddingVertical: 6,
     gap: 4,
   },
   resetButtonText: {
     color: colors.textSecondary,
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '700',
   },
 
@@ -2772,50 +2772,50 @@ const styles = StyleSheet.create({
   },
   mltCard: {
     backgroundColor: '#12121E',
-    borderRadius: 20,
-    padding: spacing.xl,
+    borderRadius: 18,
+    padding: spacing.lg,
     borderWidth: 1.5,
     borderColor: 'rgba(255, 230, 0, 0.4)',
-    marginVertical: 10,
+    marginVertical: 8,
   },
   mltPromptLead: {
     color: '#FFE600',
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '900',
     letterSpacing: 1,
-    marginBottom: 6,
+    marginBottom: 5,
   },
   mltPromptText: {
     color: colors.textPrimary,
-    fontSize: 17,
+    fontSize: 16,
     fontWeight: '700',
-    lineHeight: 24,
+    lineHeight: 23,
   },
   votePromptSubtitle: {
     color: colors.textSecondary,
     fontSize: 10,
     fontWeight: '800',
     letterSpacing: 0.8,
-    marginVertical: 10,
+    marginVertical: 8,
   },
   mltGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 10,
+    gap: 8,
   },
   mltCandidateCard: {
-    width: (SCREEN_WIDTH - 48 - 10) / 2,
+    width: (SCREEN_WIDTH - 48 - 8) / 2,
     backgroundColor: '#10101C',
-    borderRadius: 16,
-    padding: 14,
+    borderRadius: 14,
+    padding: 12,
     alignItems: 'center',
     borderWidth: 1.5,
     borderColor: 'rgba(255, 255, 255, 0.08)',
     position: 'relative',
   },
   mltCandidateCardDuo: {
-    width: (SCREEN_WIDTH - 48 - 10) / 2,
-    paddingVertical: 20,
+    width: (SCREEN_WIDTH - 48 - 8) / 2,
+    paddingVertical: 18,
   },
   mltCandidateSelected: {
     borderColor: '#00F2FE',
@@ -2827,108 +2827,42 @@ const styles = StyleSheet.create({
   },
   crownBadge: {
     position: 'absolute',
-    top: -10,
+    top: -9,
     backgroundColor: '#FFE600',
-    paddingHorizontal: 8,
+    paddingHorizontal: 7,
     paddingVertical: 2,
-    borderRadius: 10,
+    borderRadius: 9,
   },
   candidateAvatar: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
     backgroundColor: '#2A2A3E',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 7,
   },
   candidateAvatarText: {
     color: colors.textPrimary,
     fontWeight: '900',
-    fontSize: 17,
+    fontSize: 15,
   },
   candidateName: {
     color: colors.textPrimary,
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '700',
-    marginBottom: 6,
+    marginBottom: 5,
   },
   voteCounterPill: {
     backgroundColor: 'rgba(255, 255, 255, 0.06)',
-    borderRadius: 10,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
+    borderRadius: 9,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
   },
   voteCountText: {
     color: colors.textSecondary,
     fontSize: 10,
     fontWeight: '800',
-  },
-
-  // Floating Action Bar (Emoji Blast & Chat)
-  floatingActionBar: {
-    position: 'absolute',
-    bottom: 84, // right above MiniPlayer
-    left: 12,
-    right: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(14, 14, 23, 0.95)',
-    borderRadius: 24,
-    paddingVertical: 6,
-    paddingHorizontal: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(0, 242, 254, 0.25)',
-    shadowColor: '#00F2FE',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 10,
-    zIndex: 90,
-  },
-  emojiBlastRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingRight: 8,
-  },
-  emojiBlastBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  emojiBlastText: {
-    fontSize: 18,
-  },
-  chatFabBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.accent,
-    borderRadius: 18,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    gap: 5,
-    marginLeft: 'auto',
-  },
-  chatFabText: {
-    color: '#050508',
-    fontWeight: '900',
-    fontSize: 11,
-    letterSpacing: 0.5,
-  },
-  chatBadge: {
-    backgroundColor: '#FF007F',
-    borderRadius: 8,
-    paddingHorizontal: 5,
-    paddingVertical: 1,
-  },
-  chatBadgeText: {
-    color: '#FFFFFF',
-    fontSize: 9,
-    fontWeight: '900',
   },
 
   // Chat Sheet Modal
@@ -2940,8 +2874,8 @@ const styles = StyleSheet.create({
   chatCard: {
     height: '75%',
     backgroundColor: '#0E0E17',
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
     borderWidth: 1,
     borderColor: 'rgba(0, 242, 254, 0.3)',
     display: 'flex',
@@ -2952,7 +2886,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: spacing.lg,
-    paddingVertical: 14,
+    paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255, 255, 255, 0.06)',
   },
@@ -2963,7 +2897,7 @@ const styles = StyleSheet.create({
   },
   chatTitle: {
     color: colors.textPrimary,
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '900',
     letterSpacing: 0.5,
   },
@@ -2973,19 +2907,19 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   roastChipsSection: {
-    paddingVertical: 8,
+    paddingVertical: 7,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255, 255, 255, 0.04)',
   },
   roastChipsRow: {
     paddingHorizontal: spacing.md,
-    gap: 6,
+    gap: 5,
   },
   roastChip: {
     backgroundColor: 'rgba(255, 255, 255, 0.05)',
-    borderRadius: 14,
+    borderRadius: 12,
     paddingVertical: 5,
-    paddingHorizontal: 10,
+    paddingHorizontal: 9,
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.1)',
   },
@@ -2999,8 +2933,8 @@ const styles = StyleSheet.create({
   },
   chatListContent: {
     paddingHorizontal: spacing.md,
-    paddingVertical: 12,
-    gap: 8,
+    paddingVertical: 10,
+    gap: 7,
   },
   chatBubbleWrap: {
     maxWidth: '80%',
@@ -3014,23 +2948,23 @@ const styles = StyleSheet.create({
   },
   chatSenderName: {
     color: colors.textSecondary,
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: '700',
     marginBottom: 2,
-    marginLeft: 4,
+    marginLeft: 3,
   },
   chatBubble: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 16,
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+    borderRadius: 15,
   },
   chatBubbleMe: {
     backgroundColor: colors.accent,
-    borderBottomRightRadius: 4,
+    borderBottomRightRadius: 3,
   },
   chatBubbleOther: {
     backgroundColor: '#1E1E2F',
-    borderBottomLeftRadius: 4,
+    borderBottomLeftRadius: 3,
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.08)',
   },
@@ -3046,24 +2980,24 @@ const styles = StyleSheet.create({
   chatEmpty: {
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 40,
+    paddingVertical: 35,
   },
   chatEmptyText: {
     color: colors.textPrimary,
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '700',
   },
   chatEmptySub: {
     color: colors.textSecondary,
     fontSize: 11,
-    marginTop: 4,
+    marginTop: 3,
   },
   chatInputRow: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: spacing.md,
-    paddingVertical: 10,
-    gap: 8,
+    paddingVertical: 9,
+    gap: 7,
     borderTopWidth: 1,
     borderTopColor: 'rgba(255, 255, 255, 0.08)',
     backgroundColor: '#090912',
@@ -3071,18 +3005,18 @@ const styles = StyleSheet.create({
   chatInput: {
     flex: 1,
     backgroundColor: '#151424',
-    borderRadius: 18,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
     color: colors.textPrimary,
     fontSize: 13,
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.1)',
   },
   chatSendBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: colors.accent,
     justifyContent: 'center',
     alignItems: 'center',
@@ -3099,7 +3033,7 @@ const styles = StyleSheet.create({
   modalCard: {
     width: '100%',
     backgroundColor: '#0E0E17',
-    borderRadius: 24,
+    borderRadius: 22,
     padding: spacing.xl,
     borderWidth: 1,
     borderColor: 'rgba(0, 242, 254, 0.25)',
@@ -3120,16 +3054,16 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     fontSize: 12,
     lineHeight: 18,
-    marginBottom: 14,
+    marginBottom: 12,
   },
   modalPrimaryAction: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: colors.accent,
-    borderRadius: 16,
-    paddingVertical: 13,
-    gap: 8,
+    borderRadius: 14,
+    paddingVertical: 12,
+    gap: 7,
   },
   modalPrimaryActionText: {
     color: '#050508',
@@ -3139,8 +3073,8 @@ const styles = StyleSheet.create({
   modalDividerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginVertical: 14,
-    gap: 8,
+    marginVertical: 12,
+    gap: 7,
   },
   modalLine: {
     flex: 1,
@@ -3154,14 +3088,13 @@ const styles = StyleSheet.create({
   },
   modalInput: {
     backgroundColor: '#151424',
-    borderRadius: 14,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
+    borderRadius: 12,
+    paddingVertical: 11,
+    paddingHorizontal: 14,
     color: colors.textPrimary,
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '700',
     textAlign: 'center',
-    letterSpacing: 1,
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.1)',
     marginBottom: 12,
@@ -3171,8 +3104,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(0, 242, 254, 0.1)',
-    borderRadius: 16,
-    paddingVertical: 14,
+    borderRadius: 14,
+    paddingVertical: 12,
     borderWidth: 1,
     borderColor: '#00F2FE',
     gap: 6,
@@ -3183,97 +3116,44 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
 
-  // Add Players Modal Specifics
+  // 1-Tap Squad Quick Add In Modal
+  squadQuickAddWrap: {
+    marginTop: 14,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 255, 255, 0.08)',
+  },
   sectionMiniHeading: {
     color: colors.textSecondary,
     fontSize: 10,
     fontWeight: '800',
     letterSpacing: 0.8,
-    marginBottom: 6,
-    marginTop: 8,
+    marginBottom: 8,
   },
-  savedSquadSection: {
-    marginBottom: 6,
-  },
-  savedFriendsRow: {
+  squadPillRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 6,
-    paddingBottom: 4,
   },
-  savedFriendChip: {
+  squadPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(0, 242, 254, 0.08)',
+    backgroundColor: 'rgba(0, 242, 254, 0.1)',
     borderRadius: 12,
     paddingVertical: 6,
     paddingHorizontal: 10,
     borderWidth: 1,
-    borderColor: 'rgba(0, 242, 254, 0.25)',
+    borderColor: 'rgba(0, 242, 254, 0.3)',
     gap: 5,
   },
-  savedFriendChipIn: {
+  squadPillDisabled: {
     backgroundColor: 'rgba(16, 185, 129, 0.1)',
     borderColor: '#10B981',
+    opacity: 0.6,
   },
-  savedFriendText: {
+  squadPillText: {
     color: colors.textPrimary,
     fontSize: 12,
     fontWeight: '700',
-  },
-  addPlayerRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 10,
-  },
-  addPlayerInput: {
-    flex: 1,
-    backgroundColor: '#151424',
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    color: colors.textPrimary,
-    fontSize: 13,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
-  },
-  addPlayerBtn: {
-    width: 40,
-    height: 40,
-    backgroundColor: colors.accent,
-    borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  rosterItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.04)',
-    borderRadius: 12,
-    padding: 8,
-    marginBottom: 6,
-    justifyContent: 'space-between',
-  },
-  rosterAvatar: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    backgroundColor: '#2A2A3E',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 8,
-  },
-  rosterAvatarText: {
-    color: colors.textPrimary,
-    fontWeight: '800',
-    fontSize: 12,
-  },
-  rosterItemName: {
-    flex: 1,
-    color: colors.textPrimary,
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  rosterActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
   },
 });
