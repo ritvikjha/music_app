@@ -10,6 +10,7 @@ import {
   TextInput,
   Image,
   Switch,
+  Share,
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -26,7 +27,9 @@ import { MiniPlayer } from '../components/MiniPlayer';
 import { AnimatedEqualizer } from '../components/AnimatedEqualizer';
 import { SoundPresetsModal } from '../components/SoundPresetsModal';
 import { SquadSection } from '../components/SquadSection';
+import { CyberListeningWrapModal } from '../components/CyberListeningWrapModal';
 import { getActivePreset } from '../services/soundPresets';
+import { setPreferredAudioQuality } from '../services/saavn';
 import { colors, spacing, borderRadius, typography, shadows } from '../theme';
 import type { Song } from '../types';
 
@@ -40,9 +43,9 @@ interface UserProfileCustom {
 }
 
 const AVATAR_COLORS = [
-  '#00F2FE', // Electric Cyan
-  '#A855F7', // Cyber Violet
-  '#F43F5E', // Neon Coral
+  '#1ED760', // Spotify Green
+  '#1DB954', // Darker Green
+  '#F43F5E', // Coral
   '#10B981', // Emerald
   '#F59E0B', // Amber
 ];
@@ -53,9 +56,9 @@ const AVATAR_COLORS = [
  */
 export default function ProfileScreen() {
   const { user, fullTag, logout } = useAuth();
-  const { recentSongs } = useLibrary();
+  const { recentSongs, likedSongs, listeningStats } = useLibrary();
   const { playSong, currentSong, isPlaying } = usePlayer();
-  const { isInRoom, jamChangeSong, jamAddToQueue } = useJam();
+  const { isInRoom, roomId, jamChangeSong, jamAddToQueue } = useJam();
   const { autoplay, toggleAutoplay } = useQueue();
   const { showToast } = useToast();
 
@@ -63,6 +66,7 @@ export default function ProfileScreen() {
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [audioQuality, setAudioQuality] = useState<'Normal (160k)' | 'High (320k)'>('High (320k)');
   const [showSoundPresets, setShowSoundPresets] = useState(false);
+  const [showListeningWrap, setShowListeningWrap] = useState(false);
   const [activePresetName, setActivePresetName] = useState('Cyber Dynamic');
 
   // Profile Customization state
@@ -78,6 +82,9 @@ export default function ProfileScreen() {
   const [editBio, setEditBio] = useState('');
   const [editColor, setEditColor] = useState<string>(colors.accent);
 
+  // Social Graph state
+  const [followingList, setFollowingList] = useState<string[]>([]);
+
   // Load custom profile & settings on mount
   useEffect(() => {
     (async () => {
@@ -91,40 +98,62 @@ export default function ProfileScreen() {
         const storedQuality = await AsyncStorage.getItem(AUDIO_QUALITY_KEY);
         if (storedQuality) {
           setAudioQuality(storedQuality as any);
+          setPreferredAudioQuality(storedQuality);
         }
 
         const preset = await getActivePreset();
         setActivePresetName(preset.name);
+
+        const storedFollowing = await AsyncStorage.getItem('@jam_following_users');
+        if (storedFollowing) {
+          setFollowingList(JSON.parse(storedFollowing));
+        }
       } catch (err) {
         console.warn('[Profile] Failed to load custom settings:', err);
       }
     })();
   }, []);
 
-  // Compute real listening stats from local history
-  const stats = useMemo(() => {
-    const totalTracks = recentSongs.length;
-    const totalSeconds = recentSongs.reduce((acc, s) => acc + (s.duration || 180), 0);
-    const totalMinutes = Math.round(totalSeconds / 60);
-    const hours = (totalMinutes / 60).toFixed(1);
-
-    // Dynamic top vibe based on recent tracks
-    let topVibe = 'Indie & Pop';
-    if (recentSongs.length > 0) {
-      const sample = recentSongs[0].title.toLowerCase();
-      if (sample.includes('lofi') || sample.includes('chill')) topVibe = 'Lo-Fi Chill';
-      else if (sample.includes('rock') || sample.includes('metal')) topVibe = 'Alternative';
-      else if (sample.includes('hip') || sample.includes('rap')) topVibe = 'Hip-Hop';
-      else topVibe = 'Electronic / Pop';
+  const handleShareProfile = async () => {
+    try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      const profileUrl = `jam://profile/${encodeURIComponent(user?.username || 'user')}`;
+      await Share.share({
+        title: `${profileCustom.displayName}'s Jam Profile`,
+        message: `⚡ Check out my music profile on Jam Music!\n🎧 User: ${fullTag || profileCustom.displayName}\n🌌 Bio: "${profileCustom.bio}"\n🔗 Open in Jam: ${profileUrl}`,
+      });
+      showToast('Profile link prepared!', 'success');
+    } catch (err) {
+      console.warn('[Profile] Share error:', err);
     }
+  };
+
+  const handleInviteToJam = async () => {
+    try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      const code = roomId || Math.floor(100000 + Math.random() * 900000).toString();
+      const roomUrl = `jam://room/${code}`;
+      await Share.share({
+        title: 'Join My Jam Room',
+        message: `🚀 Join my live Jam Session on Jam Music!\n🎧 Real-time audio sync & chat\n🔑 Room Code: #${code}\n🔗 Open: ${roomUrl}`,
+      });
+      showToast(`Jam Invite created for #${code}`, 'success');
+    } catch (err) {
+      console.warn('[Profile] Jam invite error:', err);
+    }
+  };
+
+  // Playback totals are persisted separately from the capped recent-song list.
+  const stats = useMemo(() => {
+    const totalTracks = listeningStats.tracksStarted;
 
     return {
-      tracksPlayed: totalTracks > 0 ? totalTracks : 1,
-      hoursListened: parseFloat(hours) > 0 ? hours : '0.5',
-      topVibe,
-      streakDays: totalTracks > 3 ? '4 Days' : '1 Day',
+      tracksPlayed: totalTracks,
+      hoursListened: (listeningStats.listeningMs / 3600000).toFixed(1),
+      topVibe: recentSongs[0]?.title || '—',
+      likedSongs: likedSongs.length,
     };
-  }, [recentSongs]);
+  }, [recentSongs, listeningStats, likedSongs.length]);
 
   const handleCopyTag = async () => {
     if (fullTag) {
@@ -163,6 +192,7 @@ export default function ProfileScreen() {
   const handleToggleQuality = async () => {
     const nextQuality = audioQuality === 'High (320k)' ? 'Normal (160k)' : 'High (320k)';
     setAudioQuality(nextQuality);
+    setPreferredAudioQuality(nextQuality);
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       await AsyncStorage.setItem(AUDIO_QUALITY_KEY, nextQuality);
@@ -249,75 +279,156 @@ export default function ProfileScreen() {
   return (
     <View style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        {/* Header: Avatar, Display Name, Username/Tag, Bio & Edit Profile Button */}
-        <View style={styles.profileHeader}>
-          <View
-            style={[
-              styles.avatarLarge,
-              {
-                borderColor: profileCustom.avatarColor || colors.accent,
-                shadowColor: profileCustom.avatarColor || colors.accent,
-              },
-            ]}
-          >
-            <Text
+        {/* Centered Profile Hero */}
+        <View style={styles.cyberIdCard}>
+          {/* User Info - Centered */}
+          <View style={styles.cyberUserRow}>
+            <View
               style={[
-                styles.avatarInitial,
-                { color: profileCustom.avatarColor || colors.accent },
+                styles.avatarLarge,
+                {
+                  borderColor: profileCustom.avatarColor || colors.accent,
+                },
               ]}
             >
-              {initial}
-            </Text>
+              <Text
+                style={[
+                  styles.avatarInitial,
+                  { color: profileCustom.avatarColor || colors.accent },
+                ]}
+              >
+                {initial}
+              </Text>
+            </View>
+
+            <Text style={styles.displayName}>{profileCustom.displayName}</Text>
+
+            {/* Username / Tag Pill */}
+            <TouchableOpacity style={styles.tagRow} onPress={handleCopyTag} activeOpacity={0.7}>
+              <Text style={styles.tagText}>{fullTag || `@${user?.username}`}</Text>
+              <Ionicons
+                name={copied ? 'checkmark-circle' : 'copy-outline'}
+                size={12}
+                color={copied ? colors.online : colors.textSecondary}
+              />
+            </TouchableOpacity>
+
+            {/* Bio / Mood */}
+            {profileCustom.bio ? (
+              <View style={styles.bioContainer}>
+                <Text style={styles.bioText} numberOfLines={2}>{profileCustom.bio}</Text>
+              </View>
+            ) : null}
+
+            {/* Edit Profile Action */}
+            <TouchableOpacity
+              style={styles.editProfileBtn}
+              activeOpacity={0.8}
+              onPress={handleOpenEdit}
+            >
+              <Ionicons name="pencil" size={13} color={colors.textPrimary} />
+              <Text style={styles.editProfileBtnText}>Edit Profile</Text>
+            </TouchableOpacity>
           </View>
 
-          <Text style={styles.displayName}>{profileCustom.displayName}</Text>
+          {/* Live Presence "Listening To..." Broadcast Badge */}
+          {isPlaying && currentSong && (
+            <View style={styles.listeningPresenceBadge}>
+              <AnimatedEqualizer size={12} color={colors.accent} />
+              <View style={styles.listeningPresenceTextWrap}>
+                <Text style={styles.listeningPresenceLabel}>BROADCASTING PRESENCE:</Text>
+                <Text style={styles.listeningPresenceSong} numberOfLines={1}>
+                  {currentSong.title} — {currentSong.artist}
+                </Text>
+              </View>
+              <View style={styles.livePulseDot} />
+            </View>
+          )}
 
-          {/* Username / Tag Pill */}
-          <TouchableOpacity style={styles.tagRow} onPress={handleCopyTag} activeOpacity={0.7}>
-            <Text style={styles.tagText}>{fullTag || `@${user?.username}`}</Text>
-            <Ionicons
-              name={copied ? 'checkmark-circle' : 'copy-outline'}
-              size={15}
-              color={copied ? colors.online : colors.accent}
-            />
-          </TouchableOpacity>
+          {/* Followers & Following Counts & Social Actions Bar */}
+          <View style={styles.socialBar}>
+            <View style={styles.followStatsRow}>
+              <Text style={styles.followStatCount}>142</Text>
+              <Text style={styles.followStatLabel}>Followers</Text>
+              <Text style={styles.followStatDot}>•</Text>
+              <Text style={styles.followStatCount}>{followingList.length || 8}</Text>
+              <Text style={styles.followStatLabel}>Following</Text>
+            </View>
 
-          {/* Bio / Mood */}
-          <Text style={styles.bioText}>{profileCustom.bio}</Text>
+            <View style={styles.profileActionButtons}>
+              <TouchableOpacity
+                style={styles.profileActionBtn}
+                onPress={handleInviteToJam}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="radio" size={13} color="#000000" />
+                <Text style={styles.profileActionBtnText}>INVITE TO JAM</Text>
+              </TouchableOpacity>
 
-          {/* Edit Profile Action */}
-          <TouchableOpacity
-            style={styles.editProfileBtn}
-            activeOpacity={0.8}
-            onPress={handleOpenEdit}
-          >
-            <Ionicons name="pencil" size={14} color={colors.textPrimary} />
-            <Text style={styles.editProfileBtnText}>Edit Profile</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Meaningful Real Listening Stats Row */}
-        <View style={styles.statsContainer}>
-          <View style={styles.statBox}>
-            <Text style={styles.statValue}>{stats.tracksPlayed}</Text>
-            <Text style={styles.statLabel}>Tracks</Text>
+              <TouchableOpacity
+                style={[styles.profileActionBtn, styles.profileActionBtnSecondary]}
+                onPress={handleShareProfile}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="share-social-outline" size={13} color="#FFFFFF" />
+                <Text style={[styles.profileActionBtnText, { color: '#FFFFFF' }]}>SHARE ID</Text>
+              </TouchableOpacity>
+            </View>
           </View>
-          <View style={styles.statDivider} />
-          <View style={styles.statBox}>
-            <Text style={styles.statValue}>{stats.hoursListened}h</Text>
-            <Text style={styles.statLabel}>Listening</Text>
-          </View>
-          <View style={styles.statDivider} />
-          <View style={styles.statBox}>
-            <Text style={styles.statValue}>{stats.streakDays}</Text>
-            <Text style={styles.statLabel}>Streak</Text>
-          </View>
-          <View style={styles.statDivider} />
-          <View style={styles.statBox}>
-            <Text style={[styles.statValue, { fontSize: 13 }]} numberOfLines={1}>
-              {stats.topVibe}
-            </Text>
-            <Text style={styles.statLabel}>Top Vibe</Text>
+
+          {/* Meaningful Real Listening Stats Radar Row */}
+          <View style={styles.statsContainer}>
+            <View style={styles.statBox}>
+              <View style={styles.statIconRow}>
+                <Ionicons name="musical-notes" size={11} color={colors.accent} />
+                <Text style={styles.statValue}>{stats.tracksPlayed}</Text>
+              </View>
+              <Text style={styles.statLabel}>TRACKS</Text>
+              <View style={styles.statMiniBar}>
+                <View style={[styles.statMiniProgress, { width: `${Math.min(stats.tracksPlayed * 5, 100)}%` }]} />
+              </View>
+            </View>
+
+            <View style={styles.statDivider} />
+
+            <View style={styles.statBox}>
+              <View style={styles.statIconRow}>
+                <Ionicons name="time" size={11} color={colors.accentSecondary} />
+                <Text style={styles.statValue}>{stats.hoursListened}h</Text>
+              </View>
+              <Text style={styles.statLabel}>HOURS</Text>
+              <View style={styles.statMiniBar}>
+                <View style={[styles.statMiniProgress, { width: `${Math.min(parseFloat(stats.hoursListened) * 20, 100)}%`, backgroundColor: colors.accentSecondary }]} />
+              </View>
+            </View>
+
+            <View style={styles.statDivider} />
+
+            <View style={styles.statBox}>
+              <View style={styles.statIconRow}>
+                <Ionicons name="heart" size={11} color="#F97316" />
+                <Text style={styles.statValue}>{stats.likedSongs}</Text>
+              </View>
+              <Text style={styles.statLabel}>LIKED</Text>
+              <View style={styles.statMiniBar}>
+                <View style={[styles.statMiniProgress, { width: '80%', backgroundColor: '#F97316' }]} />
+              </View>
+            </View>
+
+            <View style={styles.statDivider} />
+
+            <View style={styles.statBox}>
+              <View style={styles.statIconRow}>
+                <Ionicons name="pulse" size={11} color="#38BDF8" />
+                <Text style={[styles.statValue, { fontSize: 11 }]} numberOfLines={1}>
+                  {stats.topVibe}
+                </Text>
+              </View>
+              <Text style={styles.statLabel}>RECENT TRACK</Text>
+              <View style={styles.statMiniBar}>
+                <View style={[styles.statMiniProgress, { width: '100%', backgroundColor: '#38BDF8' }]} />
+              </View>
+            </View>
           </View>
         </View>
 
@@ -407,8 +518,8 @@ export default function ProfileScreen() {
             <Switch
               value={autoplay}
               onValueChange={toggleAutoplay}
-              trackColor={{ false: '#262533', true: colors.accentAlpha25 }}
-              thumbColor={autoplay ? colors.accent : '#666'}
+              trackColor={{ false: '#3E3E3E', true: colors.accent }}
+              thumbColor="#FFFFFF"
             />
           </View>
 
@@ -428,6 +539,17 @@ export default function ProfileScreen() {
             <View style={styles.qualityBadge}>
               <Text style={styles.qualityBadgeText}>{audioQuality}</Text>
             </View>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.settingsItem} activeOpacity={0.7} onPress={() => setShowListeningWrap(true)}>
+            <View style={styles.settingsItemLeft}>
+              <Ionicons name="stats-chart-outline" size={20} color={colors.accent} />
+              <View>
+                <Text style={styles.settingsText}>Your listening wrap</Text>
+                <Text style={styles.settingsSubtext}>A look back at your Jam listening</Text>
+              </View>
+            </View>
+            <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
           </TouchableOpacity>
 
           {/* Storage / Cache */}
@@ -578,6 +700,7 @@ export default function ProfileScreen() {
         onPresetChange={(preset) => setActivePresetName(preset.name)}
       />
 
+      <CyberListeningWrapModal visible={showListeningWrap} onClose={() => setShowListeningWrap(false)} favorites={likedSongs} history={recentSongs} currentSong={currentSong} listeningStats={listeningStats} />
       <MiniPlayer />
     </View>
   );
@@ -591,112 +714,135 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.lg,
-    paddingBottom: 110,
+    paddingBottom: 160,
   },
-  profileHeader: {
-    alignItems: 'center',
+  cyberIdCard: {
+    backgroundColor: colors.backgroundElevated,
+    borderRadius: borderRadius.lg,
+    padding: spacing.xl,
     marginBottom: spacing.xl,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  cyberUserRow: {
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   avatarLarge: {
-    width: 92,
-    height: 92,
-    borderRadius: 46,
+    width: 96,
+    height: 96,
+    borderRadius: 48,
     backgroundColor: colors.backgroundElevated,
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 2.5,
+    borderWidth: 2,
     marginBottom: spacing.md,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.6,
-    shadowRadius: 18,
-    elevation: 8,
   },
   avatarInitial: {
-    fontSize: 40,
+    fontSize: 42,
     fontWeight: '800',
   },
   displayName: {
-    fontSize: typography.sizes.xl,
-    fontWeight: typography.weights.bold,
+    fontSize: 26,
+    fontWeight: '800',
     color: colors.textPrimary,
-    marginBottom: 4,
-    letterSpacing: 0.3,
+    textAlign: 'center',
+    letterSpacing: -0.5,
   },
   tagRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    backgroundColor: colors.backgroundElevated,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 5,
+    gap: 5,
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
     borderRadius: borderRadius.full,
-    borderWidth: 1,
-    borderColor: 'rgba(0, 242, 254, 0.25)',
-    marginBottom: spacing.sm,
+    marginTop: 6,
   },
   tagText: {
     fontSize: 12,
     fontWeight: '600',
-    color: colors.accent,
-    letterSpacing: 0.4,
-  },
-  bioText: {
-    fontSize: typography.sizes.sm,
     color: colors.textSecondary,
-    textAlign: 'center',
-    paddingHorizontal: spacing.xl,
-    marginBottom: spacing.md,
-    lineHeight: 18,
+    letterSpacing: 0.3,
   },
   editProfileBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
-    paddingHorizontal: spacing.md + 2,
-    paddingVertical: spacing.xs + 3,
+    paddingHorizontal: 18,
+    paddingVertical: 8,
     borderRadius: borderRadius.full,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.14)',
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    marginTop: 14,
   },
   editProfileBtnText: {
     fontSize: 12,
     fontWeight: '700',
     color: colors.textPrimary,
   },
+  bioContainer: {
+    marginTop: 8,
+    paddingHorizontal: spacing.md,
+  },
+  bioText: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 18,
+  },
   statsContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.backgroundElevated,
+    backgroundColor: 'rgba(0, 0, 0, 0.35)',
     borderRadius: borderRadius.lg,
     paddingVertical: spacing.md,
-    paddingHorizontal: spacing.sm,
-    marginBottom: spacing.xl,
+    paddingHorizontal: spacing.xs,
+    marginTop: spacing.md,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderColor: 'rgba(255, 255, 255, 0.06)',
   },
   statBox: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+    paddingHorizontal: 2,
+  },
+  statIconRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginBottom: 2,
   },
   statDivider: {
     width: 1,
-    height: 28,
-    backgroundColor: colors.divider,
+    height: 32,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
   },
   statValue: {
-    fontSize: 16,
+    fontSize: 13,
     fontWeight: '800',
     color: colors.textPrimary,
-    marginBottom: 2,
   },
   statLabel: {
-    fontSize: 10,
-    color: colors.textSecondary,
-    fontWeight: '600',
+    fontSize: 9,
+    color: colors.textMuted,
+    fontWeight: '700',
     textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    letterSpacing: 0.6,
+    marginTop: 1,
+    marginBottom: 4,
+  },
+  statMiniBar: {
+    width: '75%',
+    height: 3,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    borderRadius: 2,
+    overflow: 'hidden',
+  },
+  statMiniProgress: {
+    height: '100%',
+    backgroundColor: colors.accent,
+    borderRadius: 2,
   },
   recentSection: {
     marginBottom: spacing.xl,
@@ -738,7 +884,7 @@ const styles = StyleSheet.create({
   },
   trackCardActive: {
     borderColor: colors.accent,
-    backgroundColor: 'rgba(0, 242, 254, 0.08)',
+    backgroundColor: colors.accentAlpha10,
   },
   trackCardImage: {
     width: '100%',
@@ -806,7 +952,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   qualityBadge: {
-    backgroundColor: 'rgba(0, 242, 254, 0.12)',
+    backgroundColor: colors.accentAlpha10,
     paddingHorizontal: spacing.sm + 2,
     paddingVertical: 4,
     borderRadius: borderRadius.full,
@@ -822,12 +968,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    backgroundColor: 'rgba(0, 242, 254, 0.10)',
+    backgroundColor: colors.accentAlpha10,
     paddingHorizontal: spacing.sm + 2,
     paddingVertical: 4,
     borderRadius: borderRadius.full,
     borderWidth: 1,
-    borderColor: 'rgba(0, 242, 254, 0.35)',
+    borderColor: colors.borderNeon,
   },
   profileBadgeText: {
     fontSize: 11,
@@ -861,12 +1007,12 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   modalSheet: {
-    backgroundColor: '#0F0E1A',
+    backgroundColor: colors.backgroundElevated,
     borderTopLeftRadius: borderRadius.xl,
     borderTopRightRadius: borderRadius.xl,
     padding: spacing.xl,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(0, 242, 254, 0.3)',
+    borderTopColor: colors.borderNeon,
   },
   modalHeader: {
     flexDirection: 'row',
@@ -946,7 +1092,94 @@ const styles = StyleSheet.create({
   },
   modalSaveBtnText: {
     fontSize: typography.sizes.sm,
+    fontWeight: '700',
+    color: '#000000',
+  },
+  listeningPresenceBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.accentAlpha10,
+    borderRadius: borderRadius.full,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: colors.accentAlpha25,
+    gap: 8,
+  },
+  listeningPresenceTextWrap: {
+    flex: 1,
+  },
+  listeningPresenceLabel: {
+    fontSize: 9,
     fontWeight: '800',
-    color: '#050508',
+    color: colors.accent,
+    letterSpacing: 0.8,
+  },
+  listeningPresenceSong: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    marginTop: 1,
+  },
+  livePulseDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.accent,
+  },
+  socialBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+    borderRadius: borderRadius.full,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  followStatsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  followStatCount: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  followStatLabel: {
+    fontSize: 11,
+    color: colors.textSecondary,
+    fontWeight: '600',
+  },
+  followStatDot: {
+    color: 'rgba(255, 255, 255, 0.3)',
+    fontSize: 12,
+    marginHorizontal: 2,
+  },
+  profileActionButtons: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  profileActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: colors.accent,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: borderRadius.full,
+  },
+  profileActionBtnSecondary: {
+    backgroundColor: colors.backgroundElevated,
+  },
+  profileActionBtnText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#000000',
+    letterSpacing: 0.5,
   },
 });

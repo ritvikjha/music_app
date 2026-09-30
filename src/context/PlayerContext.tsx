@@ -1,5 +1,8 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
-import { audioPlayer } from '../services/audioPlayer';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { audioPlayer, DEFAULT_FALLBACK_ARTWORK } from '../services/audioPlayer';
+import { offlineStorage } from '../services/offlineStorage';
+import { syncManager } from '../services/playbackSyncManager';
 import { getSongById, getRelatedSongs } from '../services/saavn';
 import { useQueue } from './QueueContext';
 import { useLibrary } from './LibraryContext';
@@ -12,14 +15,19 @@ interface PlayerContextValue {
   positionMs: number;
   durationMs: number;
   isLoading: boolean;
+  crossfadeEnabled: boolean;
+  setCrossfadeEnabled: (enabled: boolean) => void;
 
-  playSong: (song: Song) => Promise<void>;
+  playSong: (song: Song, opts?: { crossfade?: boolean }) => Promise<void>;
   play: () => Promise<void>;
   pause: () => Promise<void>;
   togglePlayPause: () => Promise<void>;
   seekTo: (positionMs: number) => Promise<void>;
-  skipNext: () => Promise<void>;
+  skipNext: (opts?: { crossfade?: boolean }) => Promise<void>;
   skipPrevious: () => Promise<void>;
+
+  stashTrack: (song: Song) => Promise<boolean>;
+  isTrackStashed: (songId: string) => Promise<boolean>;
 
   /** Called by JamContext to force playback state from sync */
   _forceState: (opts: {
@@ -40,9 +48,10 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const [positionMs, setPositionMs] = useState(0);
   const [durationMs, setDurationMs] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
+  const [crossfadeEnabled, setCrossfadeEnabled] = useState(true);
 
   const { getNextSong, getPreviousSong, recordPlayedSong, repeatMode, autoplay, addSongsToQueue } = useQueue();
-  const { addRecent } = useLibrary();
+  const { addRecent, toggleLike, recordTrackStarted, recordListeningTime } = useLibrary();
 
   // Track whether we're in a jam room
   const isInJamRef = useRef(false);
@@ -51,8 +60,10 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const currentSongRef = useRef(currentSong);
   const autoplayRef = useRef(autoplay);
   const isFetchingAutoplayRef = useRef(false);
-  // Guard: when true, audioPlayer status updates are ignored to prevent feedback loops
   const isSyncingRef = useRef(false);
+  const lastProgressRef = useRef<{ songId: string | null; positionMs: number } | null>(null);
+  const audiblePlayMsRef = useRef(0);
+  const countedPlaySongRef = useRef<string | null>(null);
 
   positionMsRef.current = positionMs;
   repeatModeRef.current = repeatMode;
@@ -66,49 +77,95 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   // Subscribe to audio status updates
   useEffect(() => {
     const unsubscribe = audioPlayer.onStatusUpdate((status) => {
-      // Skip status updates while _forceState is actively syncing
-      // to prevent feedback loops (local status → re-render → resync → repeat)
       if (isSyncingRef.current) return;
       setIsPlaying(status.isPlaying);
       setPositionMs(status.positionMillis ?? 0);
       setDurationMs(status.durationMillis ?? 0);
+      const nextPosition = status.positionMillis ?? 0;
+      const songId = currentSongRef.current?.id ?? null;
+      const previous = lastProgressRef.current;
+      if (previous?.songId !== songId) {
+        audiblePlayMsRef.current = 0;
+        countedPlaySongRef.current = null;
+      }
+      if (status.isPlaying && previous?.songId === songId && songId) {
+        const elapsed = nextPosition - previous.positionMs;
+        if (elapsed > 0 && elapsed <= 3000) {
+          recordListeningTime(elapsed);
+          audiblePlayMsRef.current += elapsed;
+          if (audiblePlayMsRef.current >= 10000 && countedPlaySongRef.current !== songId) {
+            const playedSong = currentSongRef.current;
+            if (playedSong) recordTrackStarted(playedSong);
+            countedPlaySongRef.current = songId;
+          }
+        }
+      }
+      lastProgressRef.current = { songId, positionMs: nextPosition };
     });
     return unsubscribe;
-  }, []);
+  }, [recordListeningTime, recordTrackStarted]);
 
   // Keep lock screen & notification metadata synchronized with currentSong
   useEffect(() => {
     if (currentSong) {
       audioPlayer.updateMetadata({
-        title: currentSong.title,
-        artist: currentSong.artist,
-        albumTitle: currentSong.album || undefined,
-        artworkUrl: currentSong.imageUrl || undefined,
+        title: currentSong.title || 'Unknown Title',
+        artist: currentSong.artist || 'Unknown Artist',
+        albumTitle: currentSong.album || currentSong.title || 'Jam Music',
+        artworkUrl: currentSong.imageUrl || DEFAULT_FALLBACK_ARTWORK,
       });
     }
   }, [currentSong]);
 
+  // Broadcast real-time "Listening To..." presence across squad and rooms
+  useEffect(() => {
+    AsyncStorage.getItem('@jam_user').then((userJson) => {
+      if (userJson) {
+        try {
+          const user = JSON.parse(userJson);
+          syncManager.emitPresenceUpdate({
+            username: user.username,
+            tag: user.tag,
+            currentSong: currentSong
+              ? { title: currentSong.title, artist: currentSong.artist, imageUrl: currentSong.imageUrl }
+              : null,
+            isPlaying,
+            roomId: isInJamRef.current ? syncManager.roomId : null,
+          });
+        } catch {}
+      }
+    });
+  }, [currentSong, isPlaying]);
+
   const playSong = useCallback(
-    async (song: Song) => {
+    async (song: Song, opts?: { crossfade?: boolean }) => {
       setIsLoading(true);
       setCurrentSong(song);
       recordPlayedSong(song);
       addRecent(song);
 
       try {
-        await audioPlayer.loadAndPlay(song.streamUrl, {
-          title: song.title,
-          artist: song.artist,
-          albumTitle: song.album || undefined,
-          artworkUrl: song.imageUrl || undefined,
-        });
+        // Check if track is stashed in local flash storage for instant zero-data playback
+        const playbackUri = await offlineStorage.getPlaybackUri(song);
+        const metadata = {
+          title: song.title || 'Unknown Title',
+          artist: song.artist || 'Unknown Artist',
+          albumTitle: song.album || song.title || 'Jam Music',
+          artworkUrl: song.imageUrl || DEFAULT_FALLBACK_ARTWORK,
+        };
+
+        if (opts?.crossfade && crossfadeEnabled && isPlaying) {
+          await audioPlayer.crossfadeTo(playbackUri, metadata, 2500);
+        } else {
+          await audioPlayer.loadAndPlay(playbackUri, metadata);
+        }
       } catch (error) {
         console.error('[Player] Failed to play song:', error);
       } finally {
         setIsLoading(false);
       }
     },
-    [recordPlayedSong, addRecent]
+    [recordPlayedSong, addRecent, recordTrackStarted, crossfadeEnabled, isPlaying]
   );
 
   const play = useCallback(async () => {
@@ -131,10 +188,24 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     await audioPlayer.seekTo(ms);
   }, []);
 
-  const skipNext = useCallback(async () => {
+  const stashTrack = useCallback(async (song: Song): Promise<boolean> => {
+    try {
+      await offlineStorage.stashTrack(song);
+      return true;
+    } catch (e) {
+      console.warn('[Player] Stash error:', e);
+      return false;
+    }
+  }, []);
+
+  const isTrackStashed = useCallback(async (songId: string): Promise<boolean> => {
+    return offlineStorage.isStashed(songId);
+  }, []);
+
+  const skipNext = useCallback(async (opts?: { crossfade?: boolean }) => {
     const nextSong = getNextSong();
     if (nextSong) {
-      await playSong(nextSong);
+      await playSong(nextSong, { crossfade: opts?.crossfade ?? crossfadeEnabled });
       return;
     }
 
@@ -195,6 +266,35 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     return unsubscribe;
   }, [skipNext]);
 
+  // Bind remote lock screen & notification action handlers (play, pause, next, prev, seek, like)
+  const toggleLikeRef = useRef(toggleLike);
+  toggleLikeRef.current = toggleLike;
+  const skipNextRef = useRef(skipNext);
+  skipNextRef.current = skipNext;
+  const skipPreviousRef = useRef(skipPrevious);
+  skipPreviousRef.current = skipPrevious;
+  const playRef = useRef(play);
+  playRef.current = play;
+  const pauseRef = useRef(pause);
+  pauseRef.current = pause;
+  const seekToRef = useRef(seekTo);
+  seekToRef.current = seekTo;
+
+  useEffect(() => {
+    audioPlayer.setMediaControlHandlers({
+      onPlay: () => playRef.current(),
+      onPause: () => pauseRef.current(),
+      onNext: () => skipNextRef.current(),
+      onPrevious: () => skipPreviousRef.current(),
+      onSeek: (ms) => seekToRef.current(ms),
+      onToggleLike: () => {
+        if (currentSongRef.current) {
+          toggleLikeRef.current(currentSongRef.current);
+        }
+      },
+    });
+  }, []);
+
   /**
    * Force the player into a specific state — used by JamContext
    * when receiving sync-state from the server.
@@ -213,11 +313,12 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
               setCurrentSong(song);
               currentSongRef.current = song;
               await audioPlayer.loadAndPlay(song.streamUrl, {
-                title: song.title,
-                artist: song.artist,
-                albumTitle: song.album || undefined,
-                artworkUrl: song.imageUrl || undefined,
+                title: song.title || 'Unknown Title',
+                artist: song.artist || 'Unknown Artist',
+                albumTitle: song.album || song.title || 'Jam Music',
+                artworkUrl: song.imageUrl || DEFAULT_FALLBACK_ARTWORK,
               });
+              addRecent(song);
               await audioPlayer.seekTo(opts.positionMs);
               if (!opts.isPlaying) {
                 await audioPlayer.pause();
@@ -253,7 +354,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         }, 150);
       }
     },
-    []
+    [recordTrackStarted, addRecent]
   );
 
   return (
@@ -264,6 +365,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         positionMs,
         durationMs,
         isLoading,
+        crossfadeEnabled,
+        setCrossfadeEnabled,
         playSong,
         play,
         pause,
@@ -271,6 +374,8 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         seekTo,
         skipNext,
         skipPrevious,
+        stashTrack,
+        isTrackStashed,
         _forceState,
         setIsInJam,
       }}

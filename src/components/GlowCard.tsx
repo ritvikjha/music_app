@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, StyleSheet, ViewStyle } from 'react-native';
-import { shadows, colors } from '../theme';
+import { shadows, colors, borderRadius } from '../theme';
 
 interface GlowCardProps {
   children: React.ReactNode;
@@ -24,7 +24,7 @@ export function GlowCard({ children, intensity = 'normal', style }: GlowCardProp
 const styles = StyleSheet.create({
   container: {
     backgroundColor: colors.backgroundElevated,
-    borderRadius: 16,
+    borderRadius: borderRadius.card,
     overflow: 'visible',
   },
 });

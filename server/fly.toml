@@ -1,0 +1,33 @@
+# fly.toml app configuration file for Jam Sync Server
+
+app = 'music-app-sync'
+primary_region = 'iad'
+
+[env]
+  DUEL_STATE_FILE = '/data/duel-state.json'
+
+[build]
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ['app']
+
+  [[http_service.checks]]
+    grace_period = '10s'
+    interval = '30s'
+    method = 'GET'
+    timeout = '5s'
+    path = '/'
+
+[[vm]]
+  memory = '256mb'
+  cpu_kind = 'shared'
+  cpus = 1
+
+[[mounts]]
+  source = 'jam_data'
+  destination = '/data'

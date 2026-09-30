@@ -8,7 +8,6 @@ import {
   StyleSheet,
   Platform,
 } from 'react-native';
-import { BlurView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useSleepTimer } from '../context/SleepTimerContext';
@@ -65,6 +64,9 @@ export function SleepTimerModal({ visible, onClose }: SleepTimerModalProps) {
 
   const modalContent = (
     <View style={styles.modalContent}>
+      <View style={styles.dragHandleContainer}>
+        <View style={styles.dragHandle} />
+      </View>
       {/* Header */}
       <View style={styles.header}>
         <Ionicons name="moon" size={22} color={colors.accent} />
@@ -126,17 +128,9 @@ export function SleepTimerModal({ visible, onClose }: SleepTimerModalProps) {
       <TouchableWithoutFeedback onPress={onClose}>
         <View style={styles.backdrop}>
           <TouchableWithoutFeedback>
-            {Platform.OS === 'ios' ? (
-              <BlurView intensity={90} tint="dark" style={styles.blurContainer}>
-                <View style={styles.glassOverlay}>
-                  {modalContent}
-                </View>
-              </BlurView>
-            ) : (
-              <View style={styles.androidContainer}>
-                {modalContent}
-              </View>
-            )}
+            <View style={styles.androidContainer}>
+              {modalContent}
+            </View>
           </TouchableWithoutFeedback>
         </View>
       </TouchableWithoutFeedback>
@@ -151,22 +145,30 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
   },
   blurContainer: {
-    borderTopLeftRadius: borderRadius.xl,
-    borderTopRightRadius: borderRadius.xl,
+    borderTopLeftRadius: 12,
+    borderTopRightRadius: 12,
     overflow: 'hidden',
   },
   glassOverlay: {
-    backgroundColor: 'rgba(22, 21, 28, 0.45)',
+    backgroundColor: '#282828',
   },
   androidContainer: {
-    backgroundColor: colors.backgroundElevated,
-    borderTopLeftRadius: borderRadius.xl,
-    borderTopRightRadius: borderRadius.xl,
-    borderTopWidth: 1,
-    borderTopColor: colors.accentAlpha25,
+    backgroundColor: '#282828',
+    borderTopLeftRadius: 12,
+    borderTopRightRadius: 12,
+  },
+  dragHandleContainer: {
+    alignItems: 'center',
+    paddingBottom: 12,
+  },
+  dragHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
   },
   modalContent: {
-    padding: spacing.xxl,
+    padding: spacing.lg,
     paddingBottom: spacing.xxxl + 16,
   },
   header: {

@@ -7,7 +7,6 @@ import {
   StyleSheet,
   Animated,
   Easing,
-  Dimensions,
   Modal,
   TextInput,
   Share,
@@ -26,14 +25,26 @@ import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { syncManager } from '../services/playbackSyncManager';
 import { MiniPlayer } from '../components/MiniPlayer';
-import { colors, spacing, borderRadius, typography } from '../theme';
+import { SpotifyTouchable } from '../components/SpotifyTouchable';
+import { colors, spacing, borderRadius, typography, shadows } from '../theme';
 import {
   DECKS,
   TRUTH_OR_DARE_ITEMS,
   WOULD_YOU_RATHER_ITEMS,
   NEVER_HAVE_I_EVER_ITEMS,
   MOST_LIKELY_TO_ITEMS,
+  getNextTruthOrDareItem,
+  getNextNonRepeatingIndex,
 } from '../data/partyGamesData';
+import { RoomHeader } from '../components/games/RoomHeader';
+import { GameHub } from '../components/games/GameHub';
+import { BottleSpinGame } from '../components/games/BottleSpinGame';
+import { WouldYouRatherGame } from '../components/games/WouldYouRatherGame';
+import { NeverHaveIEverGame } from '../components/games/NeverHaveIEverGame';
+import { MostLikelyToGame } from '../components/games/MostLikelyToGame';
+import { WordDuelGame } from '../components/games/WordDuelGame';
+import { TwoTruthsLieGame } from '../components/games/TwoTruthsLieGame';
+import { TriviaDuelGame } from '../components/games/TriviaDuelGame';
 import type {
   PartyGameMode,
   TruthOrDareDeck,
@@ -41,10 +52,11 @@ import type {
   PartyGameEvent,
   Friend,
   JamChatMessage,
+  OnlineDuelState,
+  OnlineDuelType,
+  TriviaDuelSettings,
 } from '../types';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const TURNTABLE_SIZE = Math.min(SCREEN_WIDTH - 48, 280);
 const STORAGE_KEY = '@jam_friends_list';
 
 const QUICK_ROASTS = [
@@ -57,6 +69,96 @@ const QUICK_ROASTS = [
   'Spin again! 🍾',
 ];
 
+interface GameErrorBoundaryProps {
+  children: React.ReactNode;
+  onReset: () => void;
+}
+
+interface GameErrorBoundaryState {
+  hasError: boolean;
+}
+
+class GameErrorBoundary extends React.Component<
+  GameErrorBoundaryProps,
+  GameErrorBoundaryState
+> {
+  constructor(props: GameErrorBoundaryProps) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError(): GameErrorBoundaryState {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    console.warn('[GameErrorBoundary] Caught render error:', error, info);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <View style={errorStyles.container}>
+          <Ionicons name="alert-circle" size={36} color={colors.accent} />
+          <Text style={errorStyles.title}>Could Not Load Game</Text>
+          <Text style={errorStyles.desc}>
+            An unexpected error occurred while rendering this game mode.
+          </Text>
+          <TouchableOpacity
+            style={errorStyles.button}
+            onPress={() => {
+              this.setState({ hasError: false });
+              this.props.onReset();
+            }}
+            activeOpacity={0.85}
+          >
+            <Text style={errorStyles.buttonText}>RETURN TO GAME HUB</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+const errorStyles = StyleSheet.create({
+  container: {
+    backgroundColor: colors.backgroundElevated,
+    borderRadius: borderRadius.lg,
+    padding: spacing.xl,
+    alignItems: 'center',
+    marginVertical: spacing.xl,
+    borderWidth: 1,
+    borderColor: colors.borderNeon,
+  },
+  title: {
+    color: colors.textPrimary,
+    fontSize: typography.sizes.md,
+    fontWeight: typography.weights.extrabold,
+    marginTop: spacing.sm,
+    marginBottom: spacing.xs,
+  },
+  desc: {
+    color: colors.textSecondary,
+    fontSize: typography.sizes.xs,
+    textAlign: 'center',
+    marginBottom: spacing.lg,
+    lineHeight: 18,
+  },
+  button: {
+    backgroundColor: colors.accent,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.sm + 2,
+    borderRadius: borderRadius.md,
+  },
+  buttonText: {
+    color: '#000000',
+    fontSize: typography.sizes.xs,
+    fontWeight: typography.weights.bold,
+    letterSpacing: 0.5,
+  },
+});
+
 export default function GamesScreen() {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
@@ -64,6 +166,7 @@ export default function GamesScreen() {
     isInRoom,
     roomId,
     memberCount,
+    isConnected,
     createRoom,
     joinRoom,
     leaveRoom,
@@ -76,10 +179,70 @@ export default function GamesScreen() {
 
   const myName = user?.username || 'You';
 
-  // Active game mode
-  const [activeMode, setActiveMode] = useState<PartyGameMode>('bottle');
+  // Active game mode: defaults to landing GameHub
+  const [activeMode, setActiveMode] = useState<PartyGameMode>('hub');
+  const [onlineDuel, setOnlineDuel] = useState<OnlineDuelState | null>(null);
+  const [pendingOnlineGame, setPendingOnlineGame] = useState<OnlineDuelType | null>(null);
+  const [pendingTriviaSettings, setPendingTriviaSettings] = useState<TriviaDuelSettings>({ category: 'Any topic', difficulty: 'easy' });
 
-  // Squad / Players roster — DEFAULT TO 2 PLAYERS!
+  useEffect(() => {
+    const offState = syncManager.onDuelState((state) => {
+      setOnlineDuel(state);
+      if (state) setActiveMode(state.type);
+    });
+    const offError = syncManager.onDuelError((message) => {
+      setPendingOnlineGame(null);
+      showToast(message, 'error');
+    });
+    return () => { offState(); offError(); };
+  }, [showToast]);
+
+  useEffect(() => {
+    if (!isInRoom) {
+      setOnlineDuel(null);
+      setPendingOnlineGame(null);
+    }
+  }, [isInRoom]);
+
+  useEffect(() => {
+    if (!pendingOnlineGame || !isInRoom || !isConnected || memberCount < 2) return;
+    if (memberCount > 2) {
+      setPendingOnlineGame(null);
+      showToast('A 1v1 room needs exactly two people. Create a new room for this game.', 'error');
+      return;
+    }
+    syncManager.startOnlineDuel(pendingOnlineGame, pendingOnlineGame === 'trivia_duel' ? pendingTriviaSettings : undefined);
+    setPendingOnlineGame(null);
+  }, [pendingOnlineGame, pendingTriviaSettings, isInRoom, isConnected, memberCount, showToast]);
+
+  const playOnline = useCallback((type: OnlineDuelType, settings?: TriviaDuelSettings) => {
+    if (!isInRoom) {
+      setPendingOnlineGame(type);
+      if (settings) setPendingTriviaSettings(settings);
+      setShowJoinModal(true);
+      showToast('Create a room or join your friend to play online.', 'info');
+      return;
+    }
+    if (memberCount > 2) {
+      showToast('A 1v1 game needs a room with exactly two people.', 'error');
+      return;
+    }
+    if (!isConnected) {
+      setPendingOnlineGame(type);
+      if (settings) setPendingTriviaSettings(settings);
+      showToast('Connecting to the game room… try again in a moment.', 'info');
+      return;
+    }
+    if (memberCount < 2) {
+      setPendingOnlineGame(type);
+      if (settings) setPendingTriviaSettings(settings);
+      showToast('Share the room code. The game starts when your friend joins.', 'info');
+      return;
+    }
+    syncManager.startOnlineDuel(type, settings);
+  }, [isInRoom, memberCount, isConnected, showToast]);
+
+  // Squad / Players roster — DEFAULT TO 2 PLAYERS
   const [roster, setRoster] = useState<string[]>([myName, 'Player 2']);
   const [savedFriends, setSavedFriends] = useState<Friend[]>([]);
   const [newPlayerInput, setNewPlayerInput] = useState('');
@@ -132,12 +295,13 @@ export default function GamesScreen() {
   }, [messages, myName, showChatModal, triggerPartyNotice]);
 
   // ─── Mode 1: Spin the Bottle & Truth or Dare State ─────────────────────────
-  const [selectedDeck, setSelectedDeck] = useState<TruthOrDareDeck>('casual');
+  const [selectedDeck, setSelectedDeck] = useState<TruthOrDareDeck>('normal');
   const [isSpinning, setIsSpinning] = useState(false);
   const [chosenPlayerIndex, setChosenPlayerIndex] = useState<number | null>(null);
   const [activeCard, setActiveCard] = useState<TruthOrDareItem | null>(null);
   const [timerSeconds, setTimerSeconds] = useState<number>(0);
   const [isTimerRunning, setIsTimerRunning] = useState(false);
+  const [usedTruthOrDareIds, setUsedTruthOrDareIds] = useState<string[]>([]);
 
   // Bottle rotation animation
   const bottleAngleAnim = useRef(new Animated.Value(0)).current;
@@ -146,10 +310,12 @@ export default function GamesScreen() {
 
   // ─── Mode 2: Would You Rather State ─────────────────────────────────────────
   const [wyrIndex, setWyrIndex] = useState(0);
+  const [seenWyrIndices, setSeenWyrIndices] = useState<number[]>([0]);
   const [wyrVotes, setWyrVotes] = useState<{ [itemId: string]: { [username: string]: 'A' | 'B' } }>({});
 
   // ─── Mode 3: Never Have I Ever State ────────────────────────────────────────
   const [nhieIndex, setNhieIndex] = useState(0);
+  const [seenNhieIndices, setSeenNhieIndices] = useState<number[]>([0]);
   const [playerLives, setPlayerLives] = useState<{ [username: string]: number }>({
     [myName]: 5,
     'Player 2': 5,
@@ -157,6 +323,7 @@ export default function GamesScreen() {
 
   // ─── Mode 4: Most Likely To State ───────────────────────────────────────────
   const [mltIndex, setMltIndex] = useState(0);
+  const [seenMltIndices, setSeenMltIndices] = useState<number[]>([0]);
   const [mltVotes, setMltVotes] = useState<{ [itemId: string]: { [voter: string]: string } }>({});
 
   // Join Room Modal
@@ -169,16 +336,14 @@ export default function GamesScreen() {
       const saved = await AsyncStorage.getItem(STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
+        if (Array.isArray(parsed) && parsed.length > 0) {
           setSavedFriends(parsed);
-          if (parsed.length > 0) {
-            setRoster((prev) => [prev[0] || myName, parsed[0].username]);
-            setPlayerLives((prev) => ({
-              ...prev,
-              [myName]: prev[myName] ?? 5,
-              [parsed[0].username]: 5,
-            }));
-          }
+          setRoster((prev) => [prev[0] || myName, parsed[0].username]);
+          setPlayerLives((prev) => ({
+            ...prev,
+            [myName]: prev[myName] ?? 5,
+            [parsed[0].username]: 5,
+          }));
         }
       }
     } catch (err) {
@@ -227,13 +392,16 @@ export default function GamesScreen() {
         case 'bottle_spin': {
           setIsSpinning(true);
           setActiveCard(null);
+          setChosenPlayerIndex(null);
           triggerPartyNotice(`🍾 ${event.spinnerName} spun the bottle!`);
           Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
+          currentAngleRef.current = event.targetAngle;
+
           Animated.timing(bottleAngleAnim, {
             toValue: event.targetAngle,
-            duration: event.durationMs || 3200,
-            easing: Easing.out(Easing.cubic),
+            duration: event.durationMs || 3400,
+            easing: Easing.bezier(0.12, 0.8, 0.32, 1.0),
             useNativeDriver: true,
           }).start(() => {
             setIsSpinning(false);
@@ -245,7 +413,7 @@ export default function GamesScreen() {
 
         case 'bottle_select_card': {
           setActiveCard(event.item);
-          setSelectedDeck(event.deck);
+          setSelectedDeck(event.deck as TruthOrDareDeck);
           triggerPartyNotice(`🎯 ${event.chosenBy} picked a ${event.item.type.toUpperCase()}!`);
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           break;
@@ -345,20 +513,22 @@ export default function GamesScreen() {
     setActiveCard(null);
     setTimerSeconds(0);
     setIsTimerRunning(false);
+    setChosenPlayerIndex(null);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
 
     const targetPlayerIndex = Math.floor(Math.random() * roster.length);
     const arcDegrees = 360 / roster.length;
     const playerAngle = targetPlayerIndex * arcDegrees;
 
-    const extraSpins = (4 + Math.floor(Math.random() * 3)) * 360;
+    const extraSpins = (5 + Math.floor(Math.random() * 3)) * 360;
     const currentAngle = currentAngleRef.current;
     const currentMod = currentAngle % 360;
     let diff = playerAngle - currentMod;
     if (diff <= 0) diff += 360;
 
     const finalAngle = currentAngle + extraSpins + diff;
-    const duration = 3200;
+    currentAngleRef.current = finalAngle;
+    const duration = 3400;
 
     if (isInRoom) {
       syncManager.sendGameEvent({
@@ -370,26 +540,38 @@ export default function GamesScreen() {
       });
     }
 
+    let tickCount = 0;
+    const tickInterval = setInterval(() => {
+      tickCount++;
+      if (tickCount < 18) {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      } else {
+        clearInterval(tickInterval);
+      }
+    }, 160);
+
     Animated.timing(bottleAngleAnim, {
       toValue: finalAngle,
       duration,
-      easing: Easing.out(Easing.cubic),
+      easing: Easing.bezier(0.12, 0.8, 0.32, 1.0),
       useNativeDriver: true,
     }).start(() => {
+      clearInterval(tickInterval);
       setIsSpinning(false);
       setChosenPlayerIndex(targetPlayerIndex);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     });
   };
 
+  // Pick Truth or Dare with No-Repeat Engine
   const handlePickCard = (type: 'truth' | 'dare') => {
-    const filtered = TRUTH_OR_DARE_ITEMS.filter(
-      (item) => item.deck === selectedDeck && item.type === type
+    const { item, nextUsedIds } = getNextTruthOrDareItem(
+      selectedDeck,
+      type,
+      usedTruthOrDareIds
     );
-    if (filtered.length === 0) return;
-
-    const randomItem = filtered[Math.floor(Math.random() * filtered.length)];
-    setActiveCard(randomItem);
+    setUsedTruthOrDareIds(nextUsedIds);
+    setActiveCard(item);
     setTimerSeconds(0);
     setIsTimerRunning(false);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -397,7 +579,7 @@ export default function GamesScreen() {
     if (isInRoom) {
       syncManager.sendGameEvent({
         type: 'bottle_select_card',
-        item: randomItem,
+        item,
         deck: selectedDeck,
         chosenBy: roster[chosenPlayerIndex ?? 0] || myName,
       });
@@ -419,18 +601,12 @@ export default function GamesScreen() {
 
   // ─── Actions: Would You Rather ──────────────────────────────────────────────
   const currentWyrItem = WOULD_YOU_RATHER_ITEMS[wyrIndex] || WOULD_YOU_RATHER_ITEMS[0];
-  const currentWyrVotes = wyrVotes[currentWyrItem.id] || {};
-  const myWyrVote = currentWyrVotes[myName];
-
-  const player1 = roster[0] || myName;
-  const player2 = roster[1] || 'Player 2';
-  const player1Vote = currentWyrVotes[player1];
-  const player2Vote = currentWyrVotes[player2];
 
   const handleVoteWyr = (option: 'A' | 'B', voterName = myName) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    const currentItemVotes = wyrVotes[currentWyrItem.id] || {};
     const updated = {
-      ...currentWyrVotes,
+      ...currentItemVotes,
       [voterName]: option,
     };
 
@@ -450,14 +626,19 @@ export default function GamesScreen() {
   };
 
   const handleNextWyr = () => {
-    const nextIdx = (wyrIndex + 1) % WOULD_YOU_RATHER_ITEMS.length;
-    setWyrIndex(nextIdx);
+    const { nextIndex, nextSeenIndices } = getNextNonRepeatingIndex(
+      wyrIndex,
+      WOULD_YOU_RATHER_ITEMS.length,
+      seenWyrIndices
+    );
+    setSeenWyrIndices(nextSeenIndices);
+    setWyrIndex(nextIndex);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
     if (isInRoom) {
       syncManager.sendGameEvent({
         type: 'wyr_next',
-        itemIndex: nextIdx,
+        itemIndex: nextIndex,
       });
     }
   };
@@ -486,14 +667,19 @@ export default function GamesScreen() {
   };
 
   const handleNextNhie = () => {
-    const nextIdx = (nhieIndex + 1) % NEVER_HAVE_I_EVER_ITEMS.length;
-    setNhieIndex(nextIdx);
+    const { nextIndex, nextSeenIndices } = getNextNonRepeatingIndex(
+      nhieIndex,
+      NEVER_HAVE_I_EVER_ITEMS.length,
+      seenNhieIndices
+    );
+    setSeenNhieIndices(nextSeenIndices);
+    setNhieIndex(nextIndex);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
     if (isInRoom) {
       syncManager.sendGameEvent({
         type: 'nhie_next',
-        itemIndex: nextIdx,
+        itemIndex: nextIndex,
       });
     }
   };
@@ -515,13 +701,12 @@ export default function GamesScreen() {
 
   // ─── Actions: Most Likely To ────────────────────────────────────────────────
   const currentMltItem = MOST_LIKELY_TO_ITEMS[mltIndex] || MOST_LIKELY_TO_ITEMS[0];
-  const currentMltVotes = mltVotes[currentMltItem.id] || {};
-  const myMltVote = currentMltVotes[myName];
 
   const handleVoteMlt = (votedFor: string, voterName = myName) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    const currentItemVotes = mltVotes[currentMltItem.id] || {};
     const updated = {
-      ...currentMltVotes,
+      ...currentItemVotes,
       [voterName]: votedFor,
     };
 
@@ -541,14 +726,19 @@ export default function GamesScreen() {
   };
 
   const handleNextMlt = () => {
-    const nextIdx = (mltIndex + 1) % MOST_LIKELY_TO_ITEMS.length;
-    setMltIndex(nextIdx);
+    const { nextIndex, nextSeenIndices } = getNextNonRepeatingIndex(
+      mltIndex,
+      MOST_LIKELY_TO_ITEMS.length,
+      seenMltIndices
+    );
+    setSeenMltIndices(nextSeenIndices);
+    setMltIndex(nextIndex);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
     if (isInRoom) {
       syncManager.sendGameEvent({
         type: 'mlt_next',
-        itemIndex: nextIdx,
+        itemIndex: nextIndex,
       });
     }
   };
@@ -590,8 +780,11 @@ export default function GamesScreen() {
   const handleShareRoom = async () => {
     if (!roomId) return;
     try {
+      const inviteLink = `jam://room/${roomId}`;
       await Share.share({
-        message: `🎮 Join our Squad Hangout Party on Jam Music! Room Code: ${roomId}`,
+        message: `🎮 Join our Squad Hangout Party on Jam Music!\n\nRoom Code: ${roomId}\n1-Tap Join: ${inviteLink}`,
+        url: inviteLink,
+        title: `Squad Room #${roomId} Invite`,
       });
     } catch (e) {
       console.warn(e);
@@ -662,13 +855,12 @@ export default function GamesScreen() {
     showToast(`Removed ${name}`);
   };
 
-  // ─── Interpolated Bottle Rotation ───────────────────────────────────────────
+  // Interpolated Bottle Rotation
   const bottleRotation = bottleAngleAnim.interpolate({
     inputRange: [0, 360],
     outputRange: ['0deg', '360deg'],
+    extrapolate: 'extend',
   });
-
-  const isDuoMode = roster.length === 2;
 
   return (
     <View style={styles.container}>
@@ -679,776 +871,179 @@ export default function GamesScreen() {
         </View>
       )}
 
-      {/* ─── Room Connection & Top Chat Header ───────────────────────────── */}
-      <View style={styles.header}>
-        {isInRoom ? (
-          <View style={styles.roomSyncPill}>
-            <View style={styles.onlineDot} />
-            <TouchableOpacity onPress={handleCopyRoom} activeOpacity={0.7} style={styles.roomCodeTouch}>
-              <Text style={styles.roomSyncText}>
-                ROOM <Text style={styles.roomCodeHighlight}>#{roomId}</Text>
-              </Text>
-              <Text style={styles.memberCountBadge}>{memberCount || 1} online</Text>
-              <Ionicons name="copy-outline" size={13} color={colors.accent} style={{ marginLeft: 4 }} />
-            </TouchableOpacity>
-
-            <TouchableOpacity onPress={handleShareRoom} style={styles.iconButton}>
-              <Ionicons name="share-social-outline" size={16} color={colors.accent} />
-            </TouchableOpacity>
-
-            <TouchableOpacity onPress={leaveRoom} style={styles.iconButtonDestructive}>
-              <Ionicons name="close" size={16} color="#FF4D6D" />
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <View style={styles.offlineSyncRow}>
-            <View style={styles.yellowDot} />
-            <Text style={styles.offlineTitle}>PASS & PLAY</Text>
-            <TouchableOpacity
-              style={styles.connectButton}
-              onPress={() => setShowJoinModal(true)}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="flash" size={12} color="#050508" />
-              <Text style={styles.connectButtonText}>CONNECT ONLINE</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {/* Top-Right Party Chat Button (ALWAYS VISIBLE & NEVER COVERED BY TABS) */}
-        <TouchableOpacity
-          style={styles.topChatButton}
-          onPress={() => setShowChatModal(true)}
-          activeOpacity={0.85}
-        >
-          <Ionicons name="chatbubble-ellipses" size={16} color="#00F2FE" />
-          <Text style={styles.topChatButtonText}>CHAT</Text>
-          {messages.length > 0 && (
-            <View style={styles.topChatBadge}>
-              <Text style={styles.topChatBadgeText}>{messages.length}</Text>
-            </View>
-          )}
-        </TouchableOpacity>
-      </View>
-
-      {/* ─── Clear & Simple Player Strip Right Below Header ───────────────── */}
-      <View style={styles.playerStrip}>
-        <View style={styles.playerStripHeader}>
-          <Text style={styles.playerStripTitle}>
-            PLAYERS IN GAME ({roster.length}):
-          </Text>
-          <Text style={styles.playerStripHint}>Tap name to edit</Text>
-        </View>
-
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.playerChipsRow}
-        >
-          {roster.map((player, idx) => {
-            const isMe = idx === 0;
-            return (
-              <View
-                key={player + idx}
-                style={[styles.playerChip, isMe ? styles.playerChipMe : styles.playerChipFriend]}
-              >
-                <View style={styles.playerChipAvatar}>
-                  <Text style={styles.playerChipAvatarText}>
-                    {player.charAt(0).toUpperCase()}
-                  </Text>
-                </View>
-
-                <TouchableOpacity
-                  onPress={() => {
-                    setEditingPlayerIndex(idx);
-                    setEditingPlayerName(player);
-                  }}
-                  style={styles.playerChipNameWrap}
-                  activeOpacity={0.7}
-                >
-                  <Text style={styles.playerChipName} numberOfLines={1}>
-                    {player}
-                  </Text>
-                  <Ionicons name="pencil" size={10} color={colors.textSecondary} style={{ marginLeft: 3 }} />
-                </TouchableOpacity>
-
-                {roster.length > 2 && !isMe && (
-                  <TouchableOpacity
-                    onPress={() => handleRemovePlayer(player)}
-                    style={styles.playerChipRemove}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  >
-                    <Ionicons name="close-circle" size={14} color="#FF4D6D" />
-                  </TouchableOpacity>
-                )}
-              </View>
-            );
-          })}
-
-          {/* Prominent Glowing Add Friend Chip */}
-          <TouchableOpacity
-            style={styles.addFriendChip}
-            onPress={() => setShowAddFriendModal(true)}
-            activeOpacity={0.8}
-          >
-            <Ionicons name="person-add" size={14} color="#050508" />
-            <Text style={styles.addFriendChipText}>+ ADD FRIEND</Text>
-          </TouchableOpacity>
-        </ScrollView>
-      </View>
-
-      {/* ─── Game Mode Tabs ──────────────────────────────────────────────── */}
-      <View style={styles.modeTabBar}>
-        <TouchableOpacity
-          style={[styles.modeTab, activeMode === 'bottle' && styles.modeTabActiveBottle]}
-          onPress={() => {
-            setActiveMode('bottle');
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-          }}
-          activeOpacity={0.8}
-        >
-          <Text style={styles.modeTabIcon}>🍾</Text>
-          <Text style={[styles.modeTabLabel, activeMode === 'bottle' && styles.modeTabLabelActive]}>
-            Bottle & Dare
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.modeTab, activeMode === 'wyr' && styles.modeTabActiveWyr]}
-          onPress={() => {
-            setActiveMode('wyr');
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-          }}
-          activeOpacity={0.8}
-        >
-          <Text style={styles.modeTabIcon}>🤔</Text>
-          <Text style={[styles.modeTabLabel, activeMode === 'wyr' && styles.modeTabLabelActive]}>
-            Rather?
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.modeTab, activeMode === 'nhie' && styles.modeTabActiveNhie]}
-          onPress={() => {
-            setActiveMode('nhie');
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-          }}
-          activeOpacity={0.8}
-        >
-          <Text style={styles.modeTabIcon}>✋</Text>
-          <Text style={[styles.modeTabLabel, activeMode === 'nhie' && styles.modeTabLabelActive]}>
-            Never Ever
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.modeTab, activeMode === 'mlt' && styles.modeTabActiveMlt]}
-          onPress={() => {
-            setActiveMode('mlt');
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-          }}
-          activeOpacity={0.8}
-        >
-          <Text style={styles.modeTabIcon}>👑</Text>
-          <Text style={[styles.modeTabLabel, activeMode === 'mlt' && styles.modeTabLabelActive]}>
-            Likely To
-          </Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* ─── In-Line Quick Emoji Blast Strip (Never Covered By Tabs) ─────── */}
-      <View style={styles.emojiStripRow}>
-        <Text style={styles.emojiStripLabel}>BLAST:</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.emojiStripContent}>
-          {['🔥', '😂', '💀', '😱', '👏', '🍾'].map((emoji) => (
-            <TouchableOpacity
-              key={emoji}
-              style={styles.emojiStripBtn}
-              onPress={() => handleSendEmojiBlast(emoji)}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.emojiStripText}>{emoji}</Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-      </View>
+      {/* ─── Collapsible Room / Sync Header ──────────────────────────────── */}
+      <RoomHeader
+        isInRoom={isInRoom}
+        roomId={roomId}
+        memberCount={memberCount}
+        roster={roster}
+        myName={myName}
+        messagesCount={messages.length}
+        onCopyRoom={handleCopyRoom}
+        onShareRoom={handleShareRoom}
+        onLeaveRoom={leaveRoom}
+        onConnectOnline={() => setShowJoinModal(true)}
+        onOpenChat={() => setShowChatModal(true)}
+        onAddPlayer={() => setShowAddFriendModal(true)}
+        onRenamePlayer={(idx, name) => {
+          setEditingPlayerIndex(idx);
+          setEditingPlayerName(name);
+        }}
+        onRemovePlayer={handleRemovePlayer}
+        onSendEmojiBlast={handleSendEmojiBlast}
+      />
 
       {/* ─── Main Game Canvas ────────────────────────────────────────────── */}
       <ScrollView
         contentContainerStyle={[styles.scrollContent, { paddingBottom: 110 }]}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
       >
-        {/* ══════════════════════════════════════════════════════════════════
-            MODE 1: SPIN THE BOTTLE & TRUTH OR DARE
-        ══════════════════════════════════════════════════════════════════ */}
-        {activeMode === 'bottle' && (
-          <View style={styles.bottleContainer}>
-            {/* Turntable Arena with Players */}
-            <View style={styles.turntable}>
-              <View style={styles.turntableRingOuter} />
-              <View style={styles.turntableRingInner} />
+        <GameErrorBoundary onReset={() => setActiveMode('hub')}>
+          {activeMode === 'hub' && (
+            <GameHub
+              onSelectGame={(mode) => {
+                setActiveMode(mode);
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              }}
+              isInRoom={isInRoom}
+              roomMemberCount={memberCount}
+              onConnectOnline={() => isInRoom ? handleShareRoom() : setShowJoinModal(true)}
+            />
+          )}
 
-              {/* Player Seats around the circle */}
-              {roster.map((player, idx) => {
-                const arc = 360 / roster.length;
-                const angle = (idx * arc - 90) * (Math.PI / 180);
-                const radius = TURNTABLE_SIZE / 2 - 28;
-                const x = radius * Math.cos(angle);
-                const y = radius * Math.sin(angle);
-                const isSelected = chosenPlayerIndex === idx;
+          {activeMode === 'bottle' && (
+            <BottleSpinGame
+              roster={roster}
+              isSpinning={isSpinning}
+              chosenPlayerIndex={chosenPlayerIndex}
+              selectedDeck={selectedDeck}
+              activeCard={activeCard}
+              timerSeconds={timerSeconds}
+              isTimerRunning={isTimerRunning}
+              bottleRotation={bottleRotation}
+              onSpinBottle={handleSpinBottle}
+              onSelectDeck={(deck) => setSelectedDeck(deck)}
+              onPickCard={handlePickCard}
+              onStartTimer={handleStartTimer}
+              onCompleteCard={() => {
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                showToast(`🎉 ${roster[chosenPlayerIndex ?? 0]} completed the challenge!`);
+                setActiveCard(null);
+              }}
+              onForfeitCard={() => {
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+                showToast(`💀 ${roster[chosenPlayerIndex ?? 0]} took a forfeit!`);
+                setActiveCard(null);
+              }}
+              onCloseCard={() => setActiveCard(null)}
+              onBackToHub={() => setActiveMode('hub')}
+              onEditPlayer={(idx, player) => {
+                setEditingPlayerIndex(idx);
+                setEditingPlayerName(player);
+              }}
+            />
+          )}
 
-                return (
-                  <TouchableOpacity
-                    key={player + idx}
-                    onPress={() => {
-                      setEditingPlayerIndex(idx);
-                      setEditingPlayerName(player);
-                    }}
-                    activeOpacity={0.8}
-                    style={[
-                      styles.playerNode,
-                      {
-                        transform: [{ translateX: x }, { translateY: y }],
-                      },
-                      isSelected && styles.playerNodeSelected,
-                      isDuoMode && (idx === 0 ? styles.duoNode1 : styles.duoNode2),
-                    ]}
-                  >
-                    <Text style={styles.playerAvatarLetter}>
-                      {player.charAt(0).toUpperCase()}
-                    </Text>
-                    <Text
-                      numberOfLines={1}
-                      style={[styles.playerNodeName, isSelected && styles.playerNodeNameSelected]}
-                    >
-                      {player}
-                    </Text>
-                    {isSelected && (
-                      <View style={styles.targetCrown}>
-                        <Text style={{ fontSize: 10 }}>🎯</Text>
-                      </View>
-                    )}
-                  </TouchableOpacity>
-                );
-              })}
+          {activeMode === 'wyr' && (
+            <WouldYouRatherGame
+              roster={roster}
+              myName={myName}
+              currentItem={currentWyrItem}
+              currentIndex={wyrIndex}
+              totalItems={WOULD_YOU_RATHER_ITEMS.length}
+              wyrVotes={wyrVotes}
+              isInRoom={isInRoom}
+              onVote={handleVoteWyr}
+              onNext={handleNextWyr}
+              onBackToHub={() => setActiveMode('hub')}
+            />
+          )}
 
-              {/* Rotating Bottle Component */}
-              <Animated.View
-                style={[
-                  styles.bottleWrapper,
-                  {
-                    transform: [{ rotate: bottleRotation }],
-                  },
-                ]}
-              >
-                {/* Pointer Cap */}
-                <View style={styles.bottleCap}>
-                  <View style={styles.pointerNeedle} />
-                </View>
-                {/* Bottle Neck */}
-                <View style={styles.bottleNeck} />
-                {/* Bottle Body */}
-                <View style={styles.bottleBody}>
-                  <Text style={styles.bottleBrand}>⚡ PARTY</Text>
-                </View>
-                {/* Bottle Base */}
-                <View style={styles.bottleBase} />
-              </Animated.View>
-            </View>
+          {activeMode === 'nhie' && (
+            <NeverHaveIEverGame
+              roster={roster}
+              myName={myName}
+              currentItem={currentNhieItem}
+              currentIndex={nhieIndex}
+              totalItems={NEVER_HAVE_I_EVER_ITEMS.length}
+              playerLives={playerLives}
+              onLoseLife={handleLoseLifeNhie}
+              onNext={handleNextNhie}
+              onResetLives={handleResetNhie}
+              onInnocent={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                showToast('😇 Pure & Innocent!');
+              }}
+              onBackToHub={() => setActiveMode('hub')}
+            />
+          )}
 
-            {/* Spin CTA Button */}
-            <TouchableOpacity
-              style={[styles.spinButton, isSpinning && styles.spinButtonDisabled]}
-              onPress={handleSpinBottle}
-              disabled={isSpinning}
-              activeOpacity={0.85}
-            >
-              <Ionicons name="refresh" size={22} color="#050508" style={isSpinning ? styles.spinningIcon : null} />
-              <Text style={styles.spinButtonText}>
-                {isSpinning
-                  ? 'SPINNING THE BOTTLE...'
-                  : isDuoMode
-                  ? '🍾 SPIN BETWEEN YOU TWO!'
-                  : '🍾 SPIN THE BOTTLE!'}
-              </Text>
-            </TouchableOpacity>
+          {activeMode === 'mlt' && (
+            <MostLikelyToGame
+              roster={roster}
+              myName={myName}
+              currentItem={currentMltItem}
+              currentIndex={mltIndex}
+              totalItems={MOST_LIKELY_TO_ITEMS.length}
+              mltVotes={mltVotes}
+              onVote={handleVoteMlt}
+              onNext={handleNextMlt}
+              onBackToHub={() => setActiveMode('hub')}
+            />
+          )}
 
-            {/* Chosen Player Headline */}
-            {chosenPlayerIndex !== null && (
-              <View style={styles.chosenPlayerBanner}>
-                <Text style={styles.chosenSubtitle}>THE BOTTLE HAS CHOSEN</Text>
-                <Text style={styles.chosenPlayerTitle}>
-                  🎯 {roster[chosenPlayerIndex]}
-                </Text>
-              </View>
-            )}
+          {activeMode === 'word_duel' && (
+            <WordDuelGame
+              players={roster.slice(0, 2)}
+              onBackToHub={() => setActiveMode('hub')}
+              myName={myName}
+              onlineState={onlineDuel?.type === 'word_duel' ? onlineDuel : null}
+              connected={isConnected}
+              roomMemberCount={memberCount}
+              onPlayOnline={() => playOnline('word_duel')}
+              onOnlineAction={(action) => syncManager.sendDuelAction(action)}
+              onlinePending={pendingOnlineGame === 'word_duel'}
+              roomId={roomId}
+              onShareRoom={handleShareRoom}
+              onEditPlayer={(index) => { setEditingPlayerIndex(index); setEditingPlayerName(roster[index] || ''); }}
+            />
+          )}
 
-            {/* Deck Selector */}
-            <View style={styles.deckSelectorSection}>
-              <Text style={styles.deckSelectorHeading}>SELECT SPICE LEVEL</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.deckRow}>
-                {DECKS.map((d) => {
-                  const isActive = selectedDeck === d.id;
-                  return (
-                    <TouchableOpacity
-                      key={d.id}
-                      style={[
-                        styles.deckChip,
-                        isActive && { borderColor: d.color, backgroundColor: 'rgba(255,255,255,0.08)' },
-                      ]}
-                      onPress={() => {
-                        setSelectedDeck(d.id);
-                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                      }}
-                      activeOpacity={0.8}
-                    >
-                      <Ionicons name={d.icon as any} size={15} color={d.color} />
-                      <Text style={[styles.deckChipText, isActive && { color: d.color, fontWeight: '700' }]}>
-                        {d.name}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-            </View>
+          {activeMode === 'two_truths_lie' && (
+            <TwoTruthsLieGame
+              players={roster.slice(0, 2)}
+              onBackToHub={() => setActiveMode('hub')}
+              myName={myName}
+              onlineState={onlineDuel?.type === 'two_truths_lie' ? onlineDuel : null}
+              connected={isConnected}
+              roomMemberCount={memberCount}
+              onPlayOnline={() => playOnline('two_truths_lie')}
+              onOnlineAction={(action) => syncManager.sendDuelAction(action)}
+              onlinePending={pendingOnlineGame === 'two_truths_lie'}
+              roomId={roomId}
+              onShareRoom={handleShareRoom}
+              onEditPlayer={(index) => { setEditingPlayerIndex(index); setEditingPlayerName(roster[index] || ''); }}
+            />
+          )}
 
-            {/* Truth or Dare Trigger Buttons */}
-            <View style={styles.truthDareButtonRow}>
-              <TouchableOpacity
-                style={styles.truthButton}
-                onPress={() => handlePickCard('truth')}
-                activeOpacity={0.85}
-              >
-                <Ionicons name="help-circle" size={20} color="#00F2FE" />
-                <Text style={styles.truthButtonText}>TRUTH</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.dareButton}
-                onPress={() => handlePickCard('dare')}
-                activeOpacity={0.85}
-              >
-                <Ionicons name="flame" size={20} color="#FF007F" />
-                <Text style={styles.dareButtonText}>DARE</Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* Card Display & Timer Modal / Card */}
-            {activeCard && (
-              <View style={[styles.cardContainer, activeCard.type === 'dare' ? styles.cardDare : styles.cardTruth]}>
-                <View style={styles.cardHeader}>
-                  <View
-                    style={[
-                      styles.cardBadge,
-                      { backgroundColor: activeCard.type === 'dare' ? 'rgba(255,0,127,0.2)' : 'rgba(0,242,254,0.2)' },
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.cardBadgeText,
-                        { color: activeCard.type === 'dare' ? '#FF007F' : '#00F2FE' },
-                      ]}
-                    >
-                      {activeCard.type === 'dare' ? '🔥 SPICY DARE' : '💎 CASUAL TRUTH'}
-                    </Text>
-                  </View>
-
-                  <TouchableOpacity onPress={() => setActiveCard(null)}>
-                    <Ionicons name="close" size={20} color={colors.textSecondary} />
-                  </TouchableOpacity>
-                </View>
-
-                <Text style={styles.cardPromptText}>{activeCard.text}</Text>
-
-                {/* 30s Countdown Timer */}
-                <View style={styles.timerRow}>
-                  <TouchableOpacity
-                    style={[styles.timerButton, isTimerRunning && styles.timerButtonRunning]}
-                    onPress={() => handleStartTimer(30)}
-                    activeOpacity={0.8}
-                  >
-                    <Ionicons name="timer-outline" size={16} color={isTimerRunning ? '#FFE600' : colors.textPrimary} />
-                    <Text style={[styles.timerButtonText, isTimerRunning && { color: '#FFE600' }]}>
-                      {isTimerRunning ? `⏳ ${timerSeconds}s REMAINING` : 'START 30s COUNTDOWN'}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            )}
-          </View>
-        )}
-
-        {/* ══════════════════════════════════════════════════════════════════
-            MODE 2: WOULD YOU RATHER
-        ══════════════════════════════════════════════════════════════════ */}
-        {activeMode === 'wyr' && (
-          <View style={styles.wyrContainer}>
-            <View style={styles.gameRoundBar}>
-              <Text style={styles.gameRoundText}>
-                DILEMMA {wyrIndex + 1} OF {WOULD_YOU_RATHER_ITEMS.length}
-              </Text>
-              <Text style={styles.syncedTag}>{isDuoMode ? '⚡ 2-PLAYER DUEL' : '👥 SQUAD VOTE'}</Text>
-            </View>
-
-            {/* 2-Player Pass & Play HUD */}
-            {isDuoMode && !isInRoom && (
-              <View style={styles.duoVoteHUD}>
-                <View style={styles.duoVoteCard}>
-                  <Text style={styles.duoVoteName}>{player1}</Text>
-                  <View style={styles.duoVoteRow}>
-                    <TouchableOpacity
-                      style={[styles.duoMiniPill, player1Vote === 'A' && styles.duoMiniPillA]}
-                      onPress={() => handleVoteWyr('A', player1)}
-                    >
-                      <Text style={styles.duoMiniText}>Option A</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.duoMiniPill, player1Vote === 'B' && styles.duoMiniPillB]}
-                      onPress={() => handleVoteWyr('B', player1)}
-                    >
-                      <Text style={styles.duoMiniText}>Option B</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-
-                <View style={styles.duoVoteCard}>
-                  <Text style={styles.duoVoteName}>{player2}</Text>
-                  <View style={styles.duoVoteRow}>
-                    <TouchableOpacity
-                      style={[styles.duoMiniPill, player2Vote === 'A' && styles.duoMiniPillA]}
-                      onPress={() => handleVoteWyr('A', player2)}
-                    >
-                      <Text style={styles.duoMiniText}>Option A</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.duoMiniPill, player2Vote === 'B' && styles.duoMiniPillB]}
-                      onPress={() => handleVoteWyr('B', player2)}
-                    >
-                      <Text style={styles.duoMiniText}>Option B</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              </View>
-            )}
-
-            {/* 2-Player Match / Rivalry Banner */}
-            {isDuoMode && player1Vote && player2Vote && (
-              <View style={[styles.duoResultBanner, player1Vote === player2Vote ? styles.duoMatch : styles.duoClash]}>
-                <Text style={styles.duoResultText}>
-                  {player1Vote === player2Vote
-                    ? '💖 PERFECT MATCH! You both picked the same!'
-                    : '⚡ OPPOSITES ATTRACT! You picked different choices!'}
-                </Text>
-              </View>
-            )}
-
-            {/* Option A Card (Cyan) */}
-            <TouchableOpacity
-              style={[
-                styles.wyrOptionCard,
-                styles.wyrCardA,
-                myWyrVote === 'A' && styles.wyrCardSelectedA,
-              ]}
-              onPress={() => handleVoteWyr('A', myName)}
-              activeOpacity={0.88}
-            >
-              <View style={styles.wyrCardTop}>
-                <View style={[styles.optionPill, { backgroundColor: 'rgba(0, 242, 254, 0.2)' }]}>
-                  <Text style={[styles.optionPillText, { color: '#00F2FE' }]}>OPTION A</Text>
-                </View>
-                {myWyrVote === 'A' && (
-                  <View style={styles.votedBadge}>
-                    <Ionicons name="checkmark-circle" size={16} color="#00F2FE" />
-                    <Text style={styles.votedBadgeText}>YOUR VOTE</Text>
-                  </View>
-                )}
-              </View>
-              <Text style={styles.wyrOptionText}>{currentWyrItem.optionA}</Text>
-
-              {/* Reveal Percentages & Voters */}
-              {myWyrVote && (
-                <View style={styles.wyrMeterContainer}>
-                  {(() => {
-                    const totalVotes = Object.keys(currentWyrVotes).length;
-                    const countA = Object.values(currentWyrVotes).filter((v) => v === 'A').length;
-                    const percent = totalVotes > 0 ? Math.round((countA / totalVotes) * 100) : currentWyrItem.percentA || 50;
-                    return (
-                      <>
-                        <View style={styles.meterTrack}>
-                          <View style={[styles.meterFillA, { width: `${percent}%` }]} />
-                        </View>
-                        <Text style={styles.percentTextA}>
-                          {percent}% ({countA} of {totalVotes || 1} votes)
-                        </Text>
-                      </>
-                    );
-                  })()}
-                </View>
-              )}
-            </TouchableOpacity>
-
-            {/* Lightning Center Badge */}
-            <View style={styles.vsBadgeContainer}>
-              <View style={styles.vsBadge}>
-                <Text style={styles.vsBadgeText}>⚡ OR ⚡</Text>
-              </View>
-            </View>
-
-            {/* Option B Card (Pink) */}
-            <TouchableOpacity
-              style={[
-                styles.wyrOptionCard,
-                styles.wyrCardB,
-                myWyrVote === 'B' && styles.wyrCardSelectedB,
-              ]}
-              onPress={() => handleVoteWyr('B', myName)}
-              activeOpacity={0.88}
-            >
-              <View style={styles.wyrCardTop}>
-                <View style={[styles.optionPill, { backgroundColor: 'rgba(255, 0, 127, 0.2)' }]}>
-                  <Text style={[styles.optionPillText, { color: '#FF007F' }]}>OPTION B</Text>
-                </View>
-                {myWyrVote === 'B' && (
-                  <View style={styles.votedBadge}>
-                    <Ionicons name="checkmark-circle" size={16} color="#FF007F" />
-                    <Text style={styles.votedBadgeText}>YOUR VOTE</Text>
-                  </View>
-                )}
-              </View>
-              <Text style={styles.wyrOptionText}>{currentWyrItem.optionB}</Text>
-
-              {/* Reveal Percentages & Voters */}
-              {myWyrVote && (
-                <View style={styles.wyrMeterContainer}>
-                  {(() => {
-                    const totalVotes = Object.keys(currentWyrVotes).length;
-                    const countB = Object.values(currentWyrVotes).filter((v) => v === 'B').length;
-                    const percent = totalVotes > 0 ? Math.round((countB / totalVotes) * 100) : currentWyrItem.percentB || 50;
-                    return (
-                      <>
-                        <View style={styles.meterTrack}>
-                          <View style={[styles.meterFillB, { width: `${percent}%` }]} />
-                        </View>
-                        <Text style={styles.percentTextB}>
-                          {percent}% ({countB} of {totalVotes || 1} votes)
-                        </Text>
-                      </>
-                    );
-                  })()}
-                </View>
-              )}
-            </TouchableOpacity>
-
-            {/* Navigation CTA */}
-            <TouchableOpacity style={styles.nextRoundButton} onPress={handleNextWyr} activeOpacity={0.85}>
-              <Text style={styles.nextRoundButtonText}>NEXT DILEMMA</Text>
-              <Ionicons name="arrow-forward" size={18} color="#050508" />
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {/* ══════════════════════════════════════════════════════════════════
-            MODE 3: NEVER HAVE I EVER
-        ══════════════════════════════════════════════════════════════════ */}
-        {activeMode === 'nhie' && (
-          <View style={styles.nhieContainer}>
-            {/* 2-Player Head-to-Head Duel Board */}
-            {isDuoMode ? (
-              <View style={styles.duoLivesContainer}>
-                {/* Player 1 Card */}
-                <View style={styles.duoLifeCard}>
-                  <Text style={[styles.duoPlayerName, { color: '#00F2FE' }]}>{player1}</Text>
-                  <View style={styles.duoHeartsRow}>
-                    {[1, 2, 3, 4, 5].map((h) => {
-                      const lives = playerLives[player1] ?? 5;
-                      return (
-                        <Text key={h} style={[styles.heartIcon, h > lives && styles.heartLost]}>
-                          {h > lives ? '🖤' : '❤️'}
-                        </Text>
-                      );
-                    })}
-                  </View>
-                  <Text style={styles.duoRemainingLives}>
-                    {(playerLives[player1] ?? 5) > 0 ? `${playerLives[player1] ?? 5} HEARTS` : '💀 OUT!'}
-                  </Text>
-                  <TouchableOpacity
-                    style={styles.duoIHaveBtn1}
-                    onPress={() => handleLoseLifeNhie(player1)}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={styles.duoIHaveText}>I HAVE! (-1 ❤️)</Text>
-                  </TouchableOpacity>
-                </View>
-
-                {/* VS divider */}
-                <View style={styles.duoVsDivider}>
-                  <Text style={styles.duoVsText}>VS</Text>
-                </View>
-
-                {/* Player 2 Card */}
-                <View style={styles.duoLifeCard}>
-                  <Text style={[styles.duoPlayerName, { color: '#FF007F' }]}>{player2}</Text>
-                  <View style={styles.duoHeartsRow}>
-                    {[1, 2, 3, 4, 5].map((h) => {
-                      const lives = playerLives[player2] ?? 5;
-                      return (
-                        <Text key={h} style={[styles.heartIcon, h > lives && styles.heartLost]}>
-                          {h > lives ? '🖤' : '❤️'}
-                        </Text>
-                      );
-                    })}
-                  </View>
-                  <Text style={styles.duoRemainingLives}>
-                    {(playerLives[player2] ?? 5) > 0 ? `${playerLives[player2] ?? 5} HEARTS` : '💀 OUT!'}
-                  </Text>
-                  <TouchableOpacity
-                    style={styles.duoIHaveBtn2}
-                    onPress={() => handleLoseLifeNhie(player2)}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={styles.duoIHaveText}>I HAVE! (-1 ❤️)</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            ) : (
-              /* Multi-player Squad Scoreboard */
-              <View style={styles.livesBoard}>
-                <Text style={styles.livesBoardTitle}>SQUAD CYBER LIVES</Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.livesRow}>
-                  {roster.map((name) => {
-                    const lives = playerLives[name] ?? 5;
-                    const isDead = lives <= 0;
-                    return (
-                      <View key={name} style={[styles.playerLifeChip, isDead && styles.playerDeadChip]}>
-                        <Text style={styles.playerLifeName}>{name}</Text>
-                        <View style={styles.heartsRow}>
-                          {[1, 2, 3, 4, 5].map((h) => (
-                            <Text key={h} style={[styles.heartIcon, h > lives && styles.heartLost]}>
-                              {h > lives ? '🖤' : '❤️'}
-                            </Text>
-                          ))}
-                        </View>
-                        {isDead && <Text style={styles.deadLabel}>💀 ELIMINATED</Text>}
-                      </View>
-                    );
-                  })}
-                </ScrollView>
-              </View>
-            )}
-
-            {/* Prompt Statement Card */}
-            <View style={styles.nhieCard}>
-              <View style={styles.nhieHeader}>
-                <Text style={styles.nhieSubtitle}>STATEMENT #{nhieIndex + 1}</Text>
-                <Text style={styles.nhieLead}>NEVER HAVE I EVER...</Text>
-              </View>
-
-              <Text style={styles.nhieStatementText}>{currentNhieItem.statement}</Text>
-            </View>
-
-            {/* General Action Buttons */}
-            <View style={styles.nhieActionsRow}>
-              <TouchableOpacity
-                style={styles.innocentButton}
-                onPress={() => {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  showToast('😇 Pure & Innocent!');
-                }}
-                activeOpacity={0.85}
-              >
-                <Ionicons name="heart" size={18} color="#00F2FE" />
-                <Text style={styles.innocentButtonText}>WE ARE INNOCENT (NEVER)</Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* Controls */}
-            <View style={styles.nhieBottomControls}>
-              <TouchableOpacity style={styles.nhieNextButton} onPress={handleNextNhie} activeOpacity={0.85}>
-                <Text style={styles.nhieNextText}>NEXT STATEMENT</Text>
-                <Ionicons name="arrow-forward" size={18} color="#050508" />
-              </TouchableOpacity>
-
-              <TouchableOpacity style={styles.resetButton} onPress={handleResetNhie} activeOpacity={0.8}>
-                <Ionicons name="refresh" size={15} color={colors.textSecondary} />
-                <Text style={styles.resetButtonText}>RESET ALL HEARTS</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
-
-        {/* ══════════════════════════════════════════════════════════════════
-            MODE 4: MOST LIKELY TO...
-        ══════════════════════════════════════════════════════════════════ */}
-        {activeMode === 'mlt' && (
-          <View style={styles.mltContainer}>
-            <View style={styles.gameRoundBar}>
-              <Text style={styles.gameRoundText}>
-                ROUND {mltIndex + 1} OF {MOST_LIKELY_TO_ITEMS.length}
-              </Text>
-              <Text style={styles.syncedTag}>{isDuoMode ? '👑 2-PLAYER SHOWDOWN' : '👑 SQUAD VOTE'}</Text>
-            </View>
-
-            {/* Prompt Box */}
-            <View style={styles.mltCard}>
-              <Text style={styles.mltPromptLead}>WHO IS MOST LIKELY TO...</Text>
-              <Text style={styles.mltPromptText}>{currentMltItem.prompt}</Text>
-            </View>
-
-            {/* Prompt Subtitle */}
-            <Text style={styles.votePromptSubtitle}>
-              {isDuoMode ? 'TAP WHO WOULD DO THIS:' : 'TAP A FRIEND TO CAST YOUR VOTE:'}
-            </Text>
-
-            <View style={styles.mltGrid}>
-              {roster.map((player) => {
-                const totalVotes = Object.keys(currentMltVotes).length;
-                const playerVotes = Object.values(currentMltVotes).filter((v) => v === player).length;
-                const isWinner =
-                  totalVotes > 0 &&
-                  playerVotes ===
-                    Math.max(...roster.map((p) => Object.values(currentMltVotes).filter((v) => v === p).length));
-                const isSelectedByMe = myMltVote === player;
-
-                return (
-                  <TouchableOpacity
-                    key={player}
-                    style={[
-                      styles.mltCandidateCard,
-                      isDuoMode && styles.mltCandidateCardDuo,
-                      isSelectedByMe && styles.mltCandidateSelected,
-                      isWinner && styles.mltCandidateWinner,
-                    ]}
-                    onPress={() => handleVoteMlt(player, myName)}
-                    activeOpacity={0.85}
-                  >
-                    {isWinner && (
-                      <View style={styles.crownBadge}>
-                        <Text style={{ fontSize: 11, fontWeight: '900', color: '#050508' }}>👑 GUILTY</Text>
-                      </View>
-                    )}
-
-                    <View style={styles.candidateAvatar}>
-                      <Text style={styles.candidateAvatarText}>{player.charAt(0).toUpperCase()}</Text>
-                    </View>
-
-                    <Text style={styles.candidateName} numberOfLines={1}>{player}</Text>
-
-                    <View style={styles.voteCounterPill}>
-                      <Text style={styles.voteCountText}>
-                        {playerVotes} {playerVotes === 1 ? 'vote' : 'votes'}
-                      </Text>
-                    </View>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-
-            <TouchableOpacity style={styles.nextRoundButton} onPress={handleNextMlt} activeOpacity={0.85}>
-              <Text style={styles.nextRoundButtonText}>NEXT ROUND</Text>
-              <Ionicons name="arrow-forward" size={18} color="#050508" />
-            </TouchableOpacity>
-          </View>
-        )}
+          {activeMode === 'trivia_duel' && (
+            <TriviaDuelGame
+              myName={myName}
+              state={onlineDuel?.type === 'trivia_duel' ? onlineDuel : null}
+              connected={isConnected}
+              roomMemberCount={memberCount}
+              pending={pendingOnlineGame === 'trivia_duel'}
+              roomId={roomId}
+              onStart={(settings) => playOnline('trivia_duel', settings)}
+              onShareRoom={handleShareRoom}
+              onAnswer={(index) => syncManager.sendDuelAction({ type: 'answer', index })}
+              onNext={() => syncManager.sendDuelAction({ type: 'next' })}
+              onRematch={(gameType) => syncManager.sendDuelAction({ type: 'rematch-vote', gameType })}
+              onBack={() => setActiveMode('hub')}
+            />
+          )}
+        </GameErrorBoundary>
       </ScrollView>
 
       {/* ─── Party Live Chat Modal ───────────────────────────────────────── */}
@@ -1458,7 +1053,6 @@ export default function GamesScreen() {
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
           <View style={styles.chatCard}>
-            {/* Header */}
             <View style={styles.chatHeader}>
               <View style={styles.chatHeaderLeft}>
                 <Ionicons name="chatbubbles" size={20} color={colors.accent} />
@@ -1472,7 +1066,11 @@ export default function GamesScreen() {
 
             {/* Quick Roast Buttons */}
             <View style={styles.roastChipsSection}>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.roastChipsRow}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.roastChipsRow}
+              >
                 {QUICK_ROASTS.map((roast) => (
                   <TouchableOpacity
                     key={roast}
@@ -1496,12 +1094,29 @@ export default function GamesScreen() {
               renderItem={({ item }) => {
                 const isMe = item.user?.username === myName;
                 return (
-                  <View style={[styles.chatBubbleWrap, isMe ? styles.chatBubbleMeWrap : styles.chatBubbleOtherWrap]}>
+                  <View
+                    style={[
+                      styles.chatBubbleWrap,
+                      isMe ? styles.chatBubbleMeWrap : styles.chatBubbleOtherWrap,
+                    ]}
+                  >
                     {!isMe && (
-                      <Text style={styles.chatSenderName}>{item.user?.username || 'Player'}</Text>
+                      <Text style={styles.chatSenderName}>
+                        {item.user?.username || 'Player'}
+                      </Text>
                     )}
-                    <View style={[styles.chatBubble, isMe ? styles.chatBubbleMe : styles.chatBubbleOther]}>
-                      <Text style={[styles.chatMessageText, isMe ? styles.chatMessageTextMe : null]}>
+                    <View
+                      style={[
+                        styles.chatBubble,
+                        isMe ? styles.chatBubbleMe : styles.chatBubbleOther,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.chatMessageText,
+                          isMe ? styles.chatMessageTextMe : null,
+                        ]}
+                      >
                         {item.message}
                       </Text>
                     </View>
@@ -1524,24 +1139,30 @@ export default function GamesScreen() {
                 {
                   paddingBottom: isKeyboardVisible
                     ? 12
-                    : Math.max((insets.bottom || 0) + 16, Platform.OS === 'android' ? 64 : 32),
+                    : Math.max(
+                        (insets.bottom || 0) + 16,
+                        Platform.OS === 'android' ? 64 : 32
+                      ),
                 },
               ]}
             >
               <TextInput
                 style={styles.chatInput}
                 placeholder="Type a roast, dare, or reaction..."
-                placeholderTextColor="#64748B"
+                placeholderTextColor={colors.textMuted}
                 value={chatInputText}
                 onChangeText={setChatInputText}
                 onSubmitEditing={handleSendChat}
               />
               <TouchableOpacity
-                style={[styles.chatSendBtn, !chatInputText.trim() && { opacity: 0.5 }]}
+                style={[
+                  styles.chatSendBtn,
+                  !chatInputText.trim() && { opacity: 0.5 },
+                ]}
                 onPress={handleSendChat}
                 disabled={!chatInputText.trim()}
               >
-                <Ionicons name="send" size={18} color="#050508" />
+                <Ionicons name="send" size={16} color="#000000" />
               </TouchableOpacity>
             </View>
           </View>
@@ -1566,34 +1187,43 @@ export default function GamesScreen() {
             <TextInput
               style={styles.modalInput}
               placeholder="Friend name (e.g. Alex, Jordan, Sarah)..."
-              placeholderTextColor="#64748B"
+              placeholderTextColor={colors.textMuted}
               value={newPlayerInput}
               onChangeText={setNewPlayerInput}
               autoFocus
               onSubmitEditing={() => handleAddPlayerSubmit()}
             />
 
-            <TouchableOpacity
-              style={[styles.modalPrimaryAction, !newPlayerInput.trim() && { opacity: 0.5 }]}
+            <SpotifyTouchable
+              style={[
+                styles.modalPrimaryAction,
+                !newPlayerInput.trim() && { opacity: 0.5 },
+              ]}
               onPress={() => handleAddPlayerSubmit()}
               disabled={!newPlayerInput.trim()}
-              activeOpacity={0.85}
+              activeScale={0.95}
+              activeOpacity={0.88}
             >
-              <Ionicons name="person-add" size={18} color="#050508" />
+              <Ionicons name="person-add" size={18} color="#000000" />
               <Text style={styles.modalPrimaryActionText}>ADD TO GAME</Text>
-            </TouchableOpacity>
+            </SpotifyTouchable>
 
             {/* 1-Tap Quick Add from Squad */}
             {savedFriends.length > 0 && (
               <View style={styles.squadQuickAddWrap}>
-                <Text style={styles.sectionMiniHeading}>OR 1-TAP FROM SAVED SQUAD:</Text>
+                <Text style={styles.sectionMiniHeading}>
+                  OR 1-TAP FROM SAVED SQUAD:
+                </Text>
                 <View style={styles.squadPillRow}>
                   {savedFriends.map((f) => {
                     const alreadyIn = roster.includes(f.username);
                     return (
                       <TouchableOpacity
                         key={f.username + f.tag}
-                        style={[styles.squadPill, alreadyIn && styles.squadPillDisabled]}
+                        style={[
+                          styles.squadPill,
+                          alreadyIn && styles.squadPillDisabled,
+                        ]}
                         onPress={() => {
                           if (!alreadyIn) handleAddPlayerSubmit(f.username);
                         }}
@@ -1604,7 +1234,7 @@ export default function GamesScreen() {
                         <Ionicons
                           name={alreadyIn ? 'checkmark-circle' : 'add-circle'}
                           size={14}
-                          color={alreadyIn ? '#10B981' : colors.accent}
+                          color={alreadyIn ? colors.online : colors.accent}
                         />
                       </TouchableOpacity>
                     );
@@ -1634,14 +1264,18 @@ export default function GamesScreen() {
             <TextInput
               style={styles.modalInput}
               placeholder="e.g. Maya, Jordan, Alex"
-              placeholderTextColor="#64748B"
+              placeholderTextColor={colors.textMuted}
               value={editingPlayerName}
               onChangeText={setEditingPlayerName}
               autoFocus
               onSubmitEditing={handleSaveRename}
             />
 
-            <TouchableOpacity style={styles.modalPrimaryAction} onPress={handleSaveRename} activeOpacity={0.85}>
+            <TouchableOpacity
+              style={styles.modalPrimaryAction}
+              onPress={handleSaveRename}
+              activeOpacity={0.85}
+            >
               <Text style={styles.modalPrimaryActionText}>SAVE NAME</Text>
             </TouchableOpacity>
           </View>
@@ -1660,21 +1294,25 @@ export default function GamesScreen() {
             </View>
 
             <Text style={styles.modalDescription}>
-              Sync live with friends across phones! All bottle spins, dilemmas, chat, and votes happen in real-time.
+              Sync live with friends across phones! All bottle spins, dilemmas,
+              chat, and votes happen in real-time.
             </Text>
 
-            <TouchableOpacity
+            <SpotifyTouchable
               style={styles.modalPrimaryAction}
               onPress={() => {
                 createRoom();
                 setShowJoinModal(false);
                 showToast('Created new squad party room!');
               }}
-              activeOpacity={0.85}
+              activeScale={0.95}
+              activeOpacity={0.88}
             >
-              <Ionicons name="add-circle" size={20} color="#050508" />
-              <Text style={styles.modalPrimaryActionText}>HOST NEW PARTY ROOM</Text>
-            </TouchableOpacity>
+              <Ionicons name="add-circle" size={18} color="#000000" />
+              <Text style={styles.modalPrimaryActionText}>
+                HOST NEW PARTY ROOM
+              </Text>
+            </SpotifyTouchable>
 
             <View style={styles.modalDividerRow}>
               <View style={styles.modalLine} />
@@ -1685,22 +1323,28 @@ export default function GamesScreen() {
             <TextInput
               style={styles.modalInput}
               placeholder="e.g. K9X2P4"
-              placeholderTextColor="#64748B"
+              placeholderTextColor={colors.textMuted}
               autoCapitalize="characters"
               maxLength={6}
               value={joinCodeInput}
               onChangeText={setJoinCodeInput}
             />
 
-            <TouchableOpacity
-              style={[styles.modalSecondaryAction, !joinCodeInput.trim() && { opacity: 0.5 }]}
+            <SpotifyTouchable
+              style={[
+                styles.modalSecondaryAction,
+                !joinCodeInput.trim() && { opacity: 0.5 },
+              ]}
               onPress={handleJoinSubmit}
               disabled={!joinCodeInput.trim()}
-              activeOpacity={0.85}
+              activeScale={0.95}
+              activeOpacity={0.88}
             >
-              <Ionicons name="enter-outline" size={18} color="#00F2FE" />
-              <Text style={styles.modalSecondaryActionText}>JOIN WITH CODE</Text>
-            </TouchableOpacity>
+              <Ionicons name="enter-outline" size={18} color={colors.accent} />
+              <Text style={styles.modalSecondaryActionText}>
+                JOIN WITH CODE
+              </Text>
+            </SpotifyTouchable>
           </View>
         </View>
       </Modal>
@@ -1711,7 +1355,6 @@ export default function GamesScreen() {
   );
 }
 
-// ─── Styles ─────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -1721,1250 +1364,94 @@ const styles = StyleSheet.create({
     position: 'absolute',
     alignSelf: 'center',
     zIndex: 999,
-    backgroundColor: '#00F2FE',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-    shadowColor: '#00F2FE',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.7,
-    shadowRadius: 10,
-    elevation: 10,
-    maxWidth: SCREEN_WIDTH - 40,
+    backgroundColor: colors.accent,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    borderRadius: borderRadius.full,
+    ...shadows.emeraldGlow,
+    maxWidth: '90%',
   },
   partyNoticeText: {
-    color: '#050508',
-    fontWeight: '800',
-    fontSize: 12,
+    color: '#000000',
+    fontWeight: typography.weights.extrabold,
+    fontSize: typography.sizes.xs,
     letterSpacing: 0.3,
   },
-
-  // Header Row
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.md,
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.06)',
-  },
-  roomSyncPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0, 242, 254, 0.1)',
-    borderRadius: 18,
-    paddingHorizontal: 9,
-    paddingVertical: 4,
-    borderWidth: 1,
-    borderColor: 'rgba(0, 242, 254, 0.3)',
-  },
-  onlineDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 3.5,
-    backgroundColor: '#10B981',
-    marginRight: 5,
-  },
-  yellowDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 3.5,
-    backgroundColor: '#FFE600',
-    marginRight: 5,
-  },
-  roomCodeTouch: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  roomSyncText: {
-    color: colors.textSecondary,
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  roomCodeHighlight: {
-    color: colors.accent,
-    fontWeight: '900',
-  },
-  memberCountBadge: {
-    color: '#10B981',
-    fontSize: 10,
-    fontWeight: '700',
-    marginLeft: 5,
-  },
-  iconButton: {
-    marginLeft: 6,
-    padding: 2,
-  },
-  iconButtonDestructive: {
-    marginLeft: 4,
-    padding: 2,
-  },
-  offlineSyncRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  offlineTitle: {
-    color: colors.textSecondary,
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  connectButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.accent,
-    borderRadius: 10,
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    gap: 3,
-    marginLeft: 8,
-  },
-  connectButtonText: {
-    color: '#050508',
-    fontSize: 9,
-    fontWeight: '900',
-    letterSpacing: 0.3,
-  },
-
-  // Top-Right Chat Button
-  topChatButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0, 242, 254, 0.12)',
-    borderRadius: 16,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderWidth: 1,
-    borderColor: '#00F2FE',
-    gap: 4,
-  },
-  topChatButtonText: {
-    color: '#00F2FE',
-    fontSize: 11,
-    fontWeight: '900',
-    letterSpacing: 0.5,
-  },
-  topChatBadge: {
-    backgroundColor: '#FF007F',
-    borderRadius: 8,
-    paddingHorizontal: 4,
-    paddingVertical: 1,
-    marginLeft: 2,
-  },
-  topChatBadgeText: {
-    color: '#FFFFFF',
-    fontSize: 9,
-    fontWeight: '900',
-  },
-
-  // Player Strip Below Header
-  playerStrip: {
-    backgroundColor: 'rgba(18, 18, 30, 0.75)',
-    paddingVertical: 8,
-    paddingHorizontal: spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.05)',
-  },
-  playerStripHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 6,
-  },
-  playerStripTitle: {
-    color: colors.textSecondary,
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  playerStripHint: {
-    color: '#64748B',
-    fontSize: 9,
-    fontWeight: '600',
-  },
-  playerChipsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  playerChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#1E1E2F',
-    borderRadius: 16,
-    paddingVertical: 4,
-    paddingLeft: 4,
-    paddingRight: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
-  },
-  playerChipMe: {
-    borderColor: '#00F2FE',
-    backgroundColor: 'rgba(0, 242, 254, 0.08)',
-  },
-  playerChipFriend: {
-    borderColor: '#FF007F',
-    backgroundColor: 'rgba(255, 0, 127, 0.08)',
-  },
-  playerChipAvatar: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: '#2A2A3E',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 6,
-  },
-  playerChipAvatarText: {
-    color: colors.textPrimary,
-    fontWeight: '900',
-    fontSize: 10,
-  },
-  playerChipNameWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    maxWidth: 90,
-  },
-  playerChipName: {
-    color: colors.textPrimary,
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  playerChipRemove: {
-    marginLeft: 6,
-    padding: 1,
-  },
-  addFriendChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFE600',
-    borderRadius: 16,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    gap: 5,
-    shadowColor: '#FFE600',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.5,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  addFriendChipText: {
-    color: '#050508',
-    fontSize: 11,
-    fontWeight: '900',
-    letterSpacing: 0.3,
-  },
-
-  // Game Mode Tabs
-  modeTabBar: {
-    flexDirection: 'row',
-    paddingHorizontal: spacing.md,
-    paddingVertical: 6,
-    gap: 5,
-  },
-  modeTab: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.04)',
-    borderRadius: 10,
-    paddingVertical: 7,
-    paddingHorizontal: 3,
-    borderWidth: 1,
-    borderColor: 'transparent',
-    gap: 3,
-  },
-  modeTabActiveBottle: {
-    backgroundColor: 'rgba(0, 242, 254, 0.12)',
-    borderColor: '#00F2FE',
-  },
-  modeTabActiveWyr: {
-    backgroundColor: 'rgba(255, 0, 127, 0.12)',
-    borderColor: '#FF007F',
-  },
-  modeTabActiveNhie: {
-    backgroundColor: 'rgba(168, 85, 247, 0.12)',
-    borderColor: '#A855F7',
-  },
-  modeTabActiveMlt: {
-    backgroundColor: 'rgba(255, 230, 0, 0.12)',
-    borderColor: '#FFE600',
-  },
-  modeTabIcon: {
-    fontSize: 13,
-  },
-  modeTabLabel: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: colors.textSecondary,
-    letterSpacing: 0.2,
-  },
-  modeTabLabelActive: {
-    color: colors.textPrimary,
-    fontWeight: '900',
-  },
-
-  // Emoji Strip Row
-  emojiStripRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: spacing.md,
-    paddingVertical: 4,
-  },
-  emojiStripLabel: {
-    color: '#64748B',
-    fontSize: 9,
-    fontWeight: '800',
-    marginRight: 6,
-    letterSpacing: 0.5,
-  },
-  emojiStripContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  emojiStripBtn: {
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-    borderRadius: 10,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-  },
-  emojiStripText: {
-    fontSize: 15,
-  },
-
   scrollContent: {
     paddingHorizontal: spacing.lg,
-    paddingTop: 6,
+    paddingTop: spacing.sm,
+    paddingBottom: 160,
   },
 
-  // Mode 1: Bottle Styles
-  bottleContainer: {
-    alignItems: 'center',
-  },
-  turntable: {
-    width: TURNTABLE_SIZE,
-    height: TURNTABLE_SIZE,
-    borderRadius: TURNTABLE_SIZE / 2,
-    backgroundColor: 'rgba(14, 14, 23, 0.7)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    position: 'relative',
-    marginVertical: 10,
-    borderWidth: 2,
-    borderColor: 'rgba(0, 242, 254, 0.2)',
-  },
-  turntableRingOuter: {
-    position: 'absolute',
-    width: TURNTABLE_SIZE - 20,
-    height: TURNTABLE_SIZE - 20,
-    borderRadius: (TURNTABLE_SIZE - 20) / 2,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
-    borderStyle: 'dashed',
-  },
-  turntableRingInner: {
-    position: 'absolute',
-    width: 85,
-    height: 85,
-    borderRadius: 42.5,
-    backgroundColor: 'rgba(0, 242, 254, 0.05)',
-    borderWidth: 1,
-    borderColor: 'rgba(0, 242, 254, 0.15)',
-  },
-  playerNode: {
-    position: 'absolute',
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: '#1E1E2F',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: 'rgba(255, 255, 255, 0.2)',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.5,
-    shadowRadius: 4,
-  },
-  duoNode1: {
-    borderColor: '#00F2FE',
-  },
-  duoNode2: {
-    borderColor: '#FF007F',
-  },
-  playerNodeSelected: {
-    borderColor: '#FFE600',
-    backgroundColor: '#332E00',
-    shadowColor: '#FFE600',
-    shadowOpacity: 0.9,
-    shadowRadius: 10,
-    transform: [{ scale: 1.15 }],
-  },
-  playerAvatarLetter: {
-    color: colors.textPrimary,
-    fontWeight: '900',
-    fontSize: 13,
-  },
-  playerNodeName: {
-    position: 'absolute',
-    bottom: -15,
-    fontSize: 9,
-    fontWeight: '700',
-    color: colors.textSecondary,
-    width: 65,
-    textAlign: 'center',
-  },
-  playerNodeNameSelected: {
-    color: '#FFE600',
-    fontWeight: '900',
-  },
-  targetCrown: {
-    position: 'absolute',
-    top: -12,
-  },
-
-  // Bottle Graphic
-  bottleWrapper: {
-    width: 34,
-    height: 120,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  pointerNeedle: {
-    width: 0,
-    height: 0,
-    borderLeftWidth: 5,
-    borderRightWidth: 5,
-    borderBottomWidth: 9,
-    borderLeftColor: 'transparent',
-    borderRightColor: 'transparent',
-    borderBottomColor: '#FFE600',
-    marginBottom: 2,
-  },
-  bottleCap: {
-    width: 13,
-    height: 11,
-    backgroundColor: '#FFE600',
-    borderRadius: 3,
-    alignItems: 'center',
-  },
-  bottleNeck: {
-    width: 10,
-    height: 26,
-    backgroundColor: 'rgba(0, 242, 254, 0.65)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.3)',
-  },
-  bottleBody: {
-    width: 32,
-    height: 52,
-    backgroundColor: 'rgba(0, 180, 216, 0.85)',
-    borderRadius: 8,
-    borderWidth: 1.5,
-    borderColor: 'rgba(255, 255, 255, 0.4)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  bottleBrand: {
-    fontSize: 8,
-    fontWeight: '900',
-    color: '#FFFFFF',
-    letterSpacing: 0.5,
-  },
-  bottleBase: {
-    width: 28,
-    height: 7,
-    backgroundColor: 'rgba(0, 150, 180, 0.95)',
-    borderBottomLeftRadius: 5,
-    borderBottomRightRadius: 5,
-  },
-
-  spinButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.accent,
-    borderRadius: 22,
-    paddingVertical: 13,
-    paddingHorizontal: 24,
-    gap: 8,
-    shadowColor: colors.accent,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 10,
-    elevation: 8,
-    width: '100%',
-    marginTop: 4,
-  },
-  spinButtonDisabled: {
-    opacity: 0.7,
-  },
-  spinningIcon: {
-    transform: [{ rotate: '45deg' }],
-  },
-  spinButtonText: {
-    color: '#050508',
-    fontWeight: '900',
-    fontSize: 13,
-    letterSpacing: 0.5,
-  },
-
-  chosenPlayerBanner: {
-    marginTop: 12,
-    alignItems: 'center',
-  },
-  chosenSubtitle: {
-    color: colors.textSecondary,
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 1,
-  },
-  chosenPlayerTitle: {
-    color: '#FFE600',
-    fontSize: 20,
-    fontWeight: '900',
-    marginTop: 2,
-    letterSpacing: 0.5,
-  },
-
-  deckSelectorSection: {
-    width: '100%',
-    marginTop: 12,
-  },
-  deckSelectorHeading: {
-    color: colors.textSecondary,
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.8,
-    marginBottom: 6,
-  },
-  deckRow: {
-    gap: 7,
-    paddingBottom: 4,
-  },
-  deckChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.04)',
-    borderRadius: 12,
-    paddingVertical: 7,
-    paddingHorizontal: 11,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
-    gap: 5,
-  },
-  deckChipText: {
-    color: colors.textSecondary,
-    fontSize: 11,
-    fontWeight: '600',
-  },
-
-  truthDareButtonRow: {
-    flexDirection: 'row',
-    width: '100%',
-    gap: 10,
-    marginTop: 14,
-  },
-  truthButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(0, 242, 254, 0.12)',
-    borderWidth: 1.5,
-    borderColor: '#00F2FE',
-    borderRadius: 16,
-    paddingVertical: 13,
-    gap: 7,
-  },
-  truthButtonText: {
-    color: '#00F2FE',
-    fontWeight: '900',
-    fontSize: 14,
-    letterSpacing: 1,
-  },
-  dareButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(255, 0, 127, 0.12)',
-    borderWidth: 1.5,
-    borderColor: '#FF007F',
-    borderRadius: 16,
-    paddingVertical: 13,
-    gap: 7,
-  },
-  dareButtonText: {
-    color: '#FF007F',
-    fontWeight: '900',
-    fontSize: 14,
-    letterSpacing: 1,
-  },
-
-  cardContainer: {
-    width: '100%',
-    backgroundColor: '#12121E',
-    borderRadius: 18,
-    padding: spacing.lg,
-    marginTop: 14,
-    borderWidth: 1.5,
-  },
-  cardTruth: {
-    borderColor: 'rgba(0, 242, 254, 0.5)',
-    shadowColor: '#00F2FE',
-    shadowOpacity: 0.25,
-    shadowRadius: 10,
-  },
-  cardDare: {
-    borderColor: 'rgba(255, 0, 127, 0.5)',
-    shadowColor: '#FF007F',
-    shadowOpacity: 0.25,
-    shadowRadius: 10,
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 10,
-  },
-  cardBadge: {
-    borderRadius: 10,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  cardBadgeText: {
-    fontWeight: '900',
-    fontSize: 10,
-    letterSpacing: 0.5,
-  },
-  cardPromptText: {
-    color: colors.textPrimary,
-    fontSize: 15,
-    fontWeight: '700',
-    lineHeight: 22,
-    marginBottom: 14,
-  },
-  timerRow: {
-    width: '100%',
-  },
-  timerButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.06)',
-    borderRadius: 12,
-    paddingVertical: 9,
-    gap: 6,
-  },
-  timerButtonRunning: {
-    backgroundColor: 'rgba(255, 230, 0, 0.15)',
-    borderWidth: 1,
-    borderColor: '#FFE600',
-  },
-  timerButtonText: {
-    color: colors.textPrimary,
-    fontSize: 11,
-    fontWeight: '800',
-  },
-
-  // Mode 2: Would You Rather
-  wyrContainer: {
-    width: '100%',
-  },
-  gameRoundBar: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  gameRoundText: {
-    color: colors.textSecondary,
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  syncedTag: {
-    color: colors.accent,
-    fontSize: 10,
-    fontWeight: '800',
-  },
-
-  duoVoteHUD: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 10,
-  },
-  duoVoteCard: {
-    flex: 1,
-    backgroundColor: '#10101C',
-    borderRadius: 12,
-    padding: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
-  },
-  duoVoteName: {
-    color: colors.textPrimary,
-    fontSize: 11,
-    fontWeight: '800',
-    marginBottom: 5,
-    textAlign: 'center',
-  },
-  duoVoteRow: {
-    flexDirection: 'row',
-    gap: 4,
-  },
-  duoMiniPill: {
-    flex: 1,
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-    borderRadius: 8,
-    paddingVertical: 4,
-    alignItems: 'center',
-  },
-  duoMiniPillA: {
-    backgroundColor: 'rgba(0, 242, 254, 0.25)',
-    borderWidth: 1,
-    borderColor: '#00F2FE',
-  },
-  duoMiniPillB: {
-    backgroundColor: 'rgba(255, 0, 127, 0.25)',
-    borderWidth: 1,
-    borderColor: '#FF007F',
-  },
-  duoMiniText: {
-    color: colors.textPrimary,
-    fontSize: 9,
-    fontWeight: '700',
-  },
-
-  duoResultBanner: {
-    padding: 9,
-    borderRadius: 12,
-    marginBottom: 10,
-    alignItems: 'center',
-  },
-  duoMatch: {
-    backgroundColor: 'rgba(16, 185, 129, 0.15)',
-    borderWidth: 1,
-    borderColor: '#10B981',
-  },
-  duoClash: {
-    backgroundColor: 'rgba(255, 77, 109, 0.15)',
-    borderWidth: 1,
-    borderColor: '#FF4D6D',
-  },
-  duoResultText: {
-    color: colors.textPrimary,
-    fontSize: 12,
-    fontWeight: '800',
-    textAlign: 'center',
-  },
-
-  wyrOptionCard: {
-    backgroundColor: '#12121E',
-    borderRadius: 16,
-    padding: spacing.lg,
-    borderWidth: 1.5,
-  },
-  wyrCardA: {
-    borderColor: 'rgba(0, 242, 254, 0.4)',
-  },
-  wyrCardSelectedA: {
-    borderColor: '#00F2FE',
-    backgroundColor: 'rgba(0, 242, 254, 0.1)',
-  },
-  wyrCardB: {
-    borderColor: 'rgba(255, 0, 127, 0.4)',
-  },
-  wyrCardSelectedB: {
-    borderColor: '#FF007F',
-    backgroundColor: 'rgba(255, 0, 127, 0.1)',
-  },
-  wyrCardTop: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 8,
-  },
-  optionPill: {
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    borderRadius: 7,
-  },
-  optionPillText: {
-    fontSize: 9,
-    fontWeight: '900',
-    letterSpacing: 0.5,
-  },
-  votedBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-  },
-  votedBadgeText: {
-    color: colors.textPrimary,
-    fontSize: 9,
-    fontWeight: '800',
-  },
-  wyrOptionText: {
-    color: colors.textPrimary,
-    fontSize: 15,
-    fontWeight: '700',
-    lineHeight: 21,
-  },
-  wyrMeterContainer: {
-    marginTop: 12,
-  },
-  meterTrack: {
-    height: 7,
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
-    borderRadius: 4,
-    overflow: 'hidden',
-  },
-  meterFillA: {
-    height: '100%',
-    backgroundColor: '#00F2FE',
-    borderRadius: 4,
-  },
-  meterFillB: {
-    height: '100%',
-    backgroundColor: '#FF007F',
-    borderRadius: 4,
-  },
-  percentTextA: {
-    color: '#00F2FE',
-    fontSize: 11,
-    fontWeight: '800',
-    marginTop: 4,
-  },
-  percentTextB: {
-    color: '#FF007F',
-    fontSize: 11,
-    fontWeight: '800',
-    marginTop: 4,
-  },
-  vsBadgeContainer: {
-    alignItems: 'center',
-    marginVertical: -8,
-    zIndex: 10,
-  },
-  vsBadge: {
-    backgroundColor: '#050508',
-    paddingHorizontal: 11,
-    paddingVertical: 4,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.2)',
-  },
-  vsBadgeText: {
-    color: '#FFE600',
-    fontWeight: '900',
-    fontSize: 10,
-    letterSpacing: 1,
-  },
-  nextRoundButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.accent,
-    borderRadius: 18,
-    paddingVertical: 13,
-    marginTop: 16,
-    gap: 6,
-  },
-  nextRoundButtonText: {
-    color: '#050508',
-    fontSize: 13,
-    fontWeight: '900',
-    letterSpacing: 0.5,
-  },
-
-  // Mode 3: Never Have I Ever
-  nhieContainer: {
-    width: '100%',
-  },
-  duoLivesContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-    gap: 6,
-  },
-  duoLifeCard: {
-    flex: 1,
-    backgroundColor: '#10101C',
-    borderRadius: 14,
-    padding: 10,
-    alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
-  },
-  duoPlayerName: {
-    fontSize: 13,
-    fontWeight: '900',
-    marginBottom: 5,
-  },
-  duoHeartsRow: {
-    flexDirection: 'row',
-    gap: 2,
-    marginBottom: 3,
-  },
-  duoRemainingLives: {
-    color: colors.textSecondary,
-    fontSize: 9,
-    fontWeight: '800',
-    marginBottom: 6,
-  },
-  duoIHaveBtn1: {
-    backgroundColor: 'rgba(0, 242, 254, 0.15)',
-    borderWidth: 1,
-    borderColor: '#00F2FE',
-    borderRadius: 10,
-    paddingVertical: 7,
-    paddingHorizontal: 8,
-    width: '100%',
-    alignItems: 'center',
-  },
-  duoIHaveBtn2: {
-    backgroundColor: 'rgba(255, 0, 127, 0.15)',
-    borderWidth: 1,
-    borderColor: '#FF007F',
-    borderRadius: 10,
-    paddingVertical: 7,
-    paddingHorizontal: 8,
-    width: '100%',
-    alignItems: 'center',
-  },
-  duoIHaveText: {
-    color: colors.textPrimary,
-    fontSize: 10,
-    fontWeight: '900',
-  },
-  duoVsDivider: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    backgroundColor: '#050508',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.2)',
-  },
-  duoVsText: {
-    color: '#FFE600',
-    fontSize: 9,
-    fontWeight: '900',
-  },
-
-  livesBoard: {
-    backgroundColor: '#10101C',
-    borderRadius: 14,
-    padding: 10,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.06)',
-  },
-  livesBoardTitle: {
-    color: colors.textSecondary,
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.8,
-    marginBottom: 6,
-  },
-  livesRow: {
-    gap: 6,
-  },
-  playerLifeChip: {
-    backgroundColor: '#1E1E2F',
-    borderRadius: 10,
-    paddingHorizontal: 9,
-    paddingVertical: 7,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
-  },
-  playerDeadChip: {
-    borderColor: '#FF4D6D',
-    backgroundColor: 'rgba(255, 77, 109, 0.1)',
-  },
-  playerLifeName: {
-    color: colors.textPrimary,
-    fontSize: 10,
-    fontWeight: '700',
-    marginBottom: 3,
-  },
-  heartsRow: {
-    flexDirection: 'row',
-    gap: 2,
-  },
-  heartIcon: {
-    fontSize: 11,
-  },
-  heartLost: {
-    opacity: 0.3,
-  },
-  deadLabel: {
-    color: '#FF4D6D',
-    fontSize: 9,
-    fontWeight: '900',
-    marginTop: 3,
-  },
-
-  nhieCard: {
-    backgroundColor: '#12121E',
-    borderRadius: 18,
-    padding: spacing.lg,
-    borderWidth: 1.5,
-    borderColor: 'rgba(168, 85, 247, 0.4)',
-    marginVertical: 8,
-  },
-  nhieHeader: {
-    marginBottom: 8,
-  },
-  nhieSubtitle: {
-    color: colors.textSecondary,
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 1,
-  },
-  nhieLead: {
-    color: '#A855F7',
-    fontSize: 13,
-    fontWeight: '900',
-    letterSpacing: 0.5,
-    marginTop: 2,
-  },
-  nhieStatementText: {
-    color: colors.textPrimary,
-    fontSize: 16,
-    fontWeight: '700',
-    lineHeight: 23,
-  },
-  nhieActionsRow: {
-    marginTop: 4,
-  },
-  innocentButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(0, 242, 254, 0.08)',
-    borderRadius: 14,
-    paddingVertical: 11,
-    borderWidth: 1.5,
-    borderColor: '#00F2FE',
-    gap: 6,
-  },
-  innocentButtonText: {
-    color: '#00F2FE',
-    fontSize: 11,
-    fontWeight: '900',
-  },
-  nhieBottomControls: {
-    marginTop: 12,
-    gap: 8,
-  },
-  nhieNextButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.accent,
-    borderRadius: 16,
-    paddingVertical: 13,
-    gap: 6,
-  },
-  nhieNextText: {
-    color: '#050508',
-    fontSize: 12,
-    fontWeight: '900',
-  },
-  resetButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 6,
-    gap: 4,
-  },
-  resetButtonText: {
-    color: colors.textSecondary,
-    fontSize: 10,
-    fontWeight: '700',
-  },
-
-  // Mode 4: Most Likely To
-  mltContainer: {
-    width: '100%',
-  },
-  mltCard: {
-    backgroundColor: '#12121E',
-    borderRadius: 18,
-    padding: spacing.lg,
-    borderWidth: 1.5,
-    borderColor: 'rgba(255, 230, 0, 0.4)',
-    marginVertical: 8,
-  },
-  mltPromptLead: {
-    color: '#FFE600',
-    fontSize: 10,
-    fontWeight: '900',
-    letterSpacing: 1,
-    marginBottom: 5,
-  },
-  mltPromptText: {
-    color: colors.textPrimary,
-    fontSize: 16,
-    fontWeight: '700',
-    lineHeight: 23,
-  },
-  votePromptSubtitle: {
-    color: colors.textSecondary,
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.8,
-    marginVertical: 8,
-  },
-  mltGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  mltCandidateCard: {
-    width: (SCREEN_WIDTH - 48 - 8) / 2,
-    backgroundColor: '#10101C',
-    borderRadius: 14,
-    padding: 12,
-    alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
-    position: 'relative',
-  },
-  mltCandidateCardDuo: {
-    width: (SCREEN_WIDTH - 48 - 8) / 2,
-    paddingVertical: 18,
-  },
-  mltCandidateSelected: {
-    borderColor: '#00F2FE',
-    backgroundColor: 'rgba(0, 242, 254, 0.08)',
-  },
-  mltCandidateWinner: {
-    borderColor: '#FFE600',
-    backgroundColor: 'rgba(255, 230, 0, 0.08)',
-  },
-  crownBadge: {
-    position: 'absolute',
-    top: -9,
-    backgroundColor: '#FFE600',
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: 9,
-  },
-  candidateAvatar: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: '#2A2A3E',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 7,
-  },
-  candidateAvatarText: {
-    color: colors.textPrimary,
-    fontWeight: '900',
-    fontSize: 15,
-  },
-  candidateName: {
-    color: colors.textPrimary,
-    fontSize: 13,
-    fontWeight: '700',
-    marginBottom: 5,
-  },
-  voteCounterPill: {
-    backgroundColor: 'rgba(255, 255, 255, 0.06)',
-    borderRadius: 9,
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-  },
-  voteCountText: {
-    color: colors.textSecondary,
-    fontSize: 10,
-    fontWeight: '800',
-  },
-
-  // Chat Sheet Modal
+  // Chat Modal
   chatModalBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    backgroundColor: 'rgba(5, 5, 8, 0.85)',
     justifyContent: 'flex-end',
   },
   chatCard: {
+    backgroundColor: colors.backgroundElevated,
+    borderTopLeftRadius: borderRadius.xl,
+    borderTopRightRadius: borderRadius.xl,
     height: '75%',
-    backgroundColor: '#0E0E17',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    borderWidth: 1,
-    borderColor: 'rgba(0, 242, 254, 0.3)',
-    display: 'flex',
-    flexDirection: 'column',
+    borderTopWidth: 1,
+    borderColor: colors.borderCard,
   },
   chatHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: spacing.lg,
-    paddingVertical: 12,
+    padding: spacing.md,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.06)',
+    borderBottomColor: colors.divider,
   },
   chatHeaderLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: spacing.sm,
   },
   chatTitle: {
     color: colors.textPrimary,
-    fontSize: 13,
-    fontWeight: '900',
+    fontSize: typography.sizes.sm,
+    fontWeight: typography.weights.extrabold,
     letterSpacing: 0.5,
   },
   chatRoomTag: {
     color: colors.accent,
-    fontSize: 11,
-    fontWeight: '800',
+    fontSize: typography.sizes.xs,
+    fontWeight: typography.weights.bold,
   },
   roastChipsSection: {
-    paddingVertical: 7,
+    paddingVertical: spacing.sm,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.04)',
+    borderBottomColor: colors.divider,
   },
   roastChipsRow: {
     paddingHorizontal: spacing.md,
-    gap: 5,
+    gap: spacing.xs + 2,
   },
   roastChip: {
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-    borderRadius: 12,
+    backgroundColor: colors.backgroundInput,
+    borderRadius: borderRadius.full,
+    paddingHorizontal: spacing.md,
     paddingVertical: 5,
-    paddingHorizontal: 9,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: colors.borderCard,
   },
   roastChipText: {
-    color: colors.textSecondary,
-    fontSize: 11,
-    fontWeight: '700',
+    color: colors.textPrimary,
+    fontSize: typography.sizes.xs,
+    fontWeight: typography.weights.semibold,
   },
   chatList: {
     flex: 1,
   },
   chatListContent: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: 10,
-    gap: 7,
+    padding: spacing.md,
+    gap: spacing.sm,
   },
   chatBubbleWrap: {
     maxWidth: '80%',
-    marginVertical: 2,
   },
   chatBubbleMeWrap: {
     alignSelf: 'flex-end',
@@ -2974,212 +1461,207 @@ const styles = StyleSheet.create({
   },
   chatSenderName: {
     color: colors.textSecondary,
-    fontSize: 9,
-    fontWeight: '700',
+    fontSize: 10,
+    fontWeight: typography.weights.bold,
     marginBottom: 2,
-    marginLeft: 3,
+    marginLeft: 4,
   },
   chatBubble: {
-    paddingHorizontal: 11,
-    paddingVertical: 7,
-    borderRadius: 15,
+    borderRadius: borderRadius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
   },
   chatBubbleMe: {
     backgroundColor: colors.accent,
-    borderBottomRightRadius: 3,
+    borderBottomRightRadius: 2,
   },
   chatBubbleOther: {
-    backgroundColor: '#1E1E2F',
-    borderBottomLeftRadius: 3,
+    backgroundColor: colors.backgroundInput,
+    borderBottomLeftRadius: 2,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderColor: colors.borderCard,
   },
   chatMessageText: {
     color: colors.textPrimary,
-    fontSize: 13,
-    lineHeight: 18,
+    fontSize: typography.sizes.sm,
   },
   chatMessageTextMe: {
-    color: '#050508',
-    fontWeight: '700',
+    color: '#000000',
+    fontWeight: typography.weights.semibold,
   },
   chatEmpty: {
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 35,
+    paddingVertical: spacing.xxxl,
   },
   chatEmptyText: {
     color: colors.textPrimary,
-    fontSize: 13,
-    fontWeight: '700',
+    fontSize: typography.sizes.md,
+    fontWeight: typography.weights.bold,
   },
   chatEmptySub: {
-    color: colors.textSecondary,
-    fontSize: 11,
-    marginTop: 3,
+    color: colors.textMuted,
+    fontSize: typography.sizes.xs,
+    marginTop: 4,
   },
   chatInputRow: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: spacing.md,
-    paddingVertical: 9,
-    gap: 7,
+    paddingTop: spacing.sm,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.08)',
-    backgroundColor: '#090912',
+    borderTopColor: colors.divider,
+    gap: spacing.sm,
   },
   chatInput: {
     flex: 1,
-    backgroundColor: '#151424',
-    borderRadius: 16,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    backgroundColor: colors.backgroundInput,
+    borderRadius: borderRadius.full,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm + 2,
     color: colors.textPrimary,
-    fontSize: 13,
+    fontSize: typography.sizes.sm,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: colors.borderCard,
   },
   chatSendBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: colors.accent,
-    justifyContent: 'center',
     alignItems: 'center',
+    justifyContent: 'center',
   },
 
-  // Modals General
+  // Generic Modals
   modalBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    backgroundColor: 'rgba(5, 5, 8, 0.85)',
     justifyContent: 'center',
     alignItems: 'center',
     padding: spacing.xl,
   },
   modalCard: {
     width: '100%',
-    backgroundColor: '#0E0E17',
-    borderRadius: 22,
+    backgroundColor: colors.backgroundElevated,
+    borderRadius: borderRadius.lg,
     padding: spacing.xl,
-    borderWidth: 1,
-    borderColor: 'rgba(0, 242, 254, 0.25)',
+    borderWidth: 1.5,
+    borderColor: colors.borderNeon,
+    ...shadows.cardShadow,
   },
   modalHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 10,
+    justifyContent: 'space-between',
+    marginBottom: spacing.md,
   },
   modalTitle: {
     color: colors.textPrimary,
-    fontSize: 15,
-    fontWeight: '900',
+    fontSize: typography.sizes.md,
+    fontWeight: typography.weights.extrabold,
     letterSpacing: 0.5,
   },
   modalDescription: {
     color: colors.textSecondary,
-    fontSize: 12,
+    fontSize: typography.sizes.xs,
     lineHeight: 18,
-    marginBottom: 12,
+    marginBottom: spacing.lg,
+  },
+  modalInput: {
+    backgroundColor: colors.backgroundInput,
+    borderRadius: borderRadius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    color: colors.textPrimary,
+    fontSize: typography.sizes.sm,
+    borderWidth: 1,
+    borderColor: colors.borderCard,
+    marginBottom: spacing.md,
   },
   modalPrimaryAction: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: colors.accent,
-    borderRadius: 14,
-    paddingVertical: 12,
-    gap: 7,
+    borderRadius: borderRadius.pill,
+    paddingVertical: spacing.md,
+    gap: spacing.sm,
   },
   modalPrimaryActionText: {
-    color: '#050508',
-    fontWeight: '900',
-    fontSize: 13,
-  },
-  modalDividerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginVertical: 12,
-    gap: 7,
-  },
-  modalLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-  },
-  modalOrText: {
-    color: colors.textSecondary,
-    fontSize: 10,
-    fontWeight: '800',
-  },
-  modalInput: {
-    backgroundColor: '#151424',
-    borderRadius: 12,
-    paddingVertical: 11,
-    paddingHorizontal: 14,
-    color: colors.textPrimary,
-    fontSize: 14,
+    color: '#000000',
+    fontSize: typography.sizes.sm,
     fontWeight: '700',
-    textAlign: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
-    marginBottom: 12,
+    letterSpacing: 0.5,
   },
   modalSecondaryAction: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(0, 242, 254, 0.1)',
-    borderRadius: 14,
-    paddingVertical: 12,
+    backgroundColor: colors.backgroundInput,
+    borderRadius: borderRadius.md,
+    paddingVertical: spacing.md,
+    gap: spacing.sm,
     borderWidth: 1,
-    borderColor: '#00F2FE',
-    gap: 6,
+    borderColor: colors.borderNeon,
   },
   modalSecondaryActionText: {
-    color: '#00F2FE',
-    fontWeight: '900',
-    fontSize: 13,
+    color: colors.accent,
+    fontSize: typography.sizes.sm,
+    fontWeight: typography.weights.extrabold,
+    letterSpacing: 0.5,
   },
-
-  // 1-Tap Squad Quick Add In Modal
+  modalDividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: spacing.md,
+    gap: spacing.sm,
+  },
+  modalLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: colors.divider,
+  },
+  modalOrText: {
+    color: colors.textMuted,
+    fontSize: 10,
+    fontWeight: typography.weights.extrabold,
+  },
   squadQuickAddWrap: {
-    marginTop: 14,
-    paddingTop: 12,
+    marginTop: spacing.lg,
+    paddingTop: spacing.md,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.08)',
+    borderTopColor: colors.divider,
   },
   sectionMiniHeading: {
-    color: colors.textSecondary,
+    color: colors.textMuted,
     fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.8,
-    marginBottom: 8,
+    fontWeight: typography.weights.extrabold,
+    letterSpacing: 0.5,
+    marginBottom: spacing.sm,
   },
   squadPillRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 6,
+    gap: spacing.xs + 2,
   },
   squadPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(0, 242, 254, 0.1)',
-    borderRadius: 12,
-    paddingVertical: 6,
-    paddingHorizontal: 10,
+    backgroundColor: colors.backgroundInput,
+    borderRadius: borderRadius.full,
+    paddingVertical: 4,
+    paddingHorizontal: spacing.sm + 2,
+    gap: 4,
     borderWidth: 1,
-    borderColor: 'rgba(0, 242, 254, 0.3)',
-    gap: 5,
+    borderColor: colors.borderCard,
   },
   squadPillDisabled: {
-    backgroundColor: 'rgba(16, 185, 129, 0.1)',
-    borderColor: '#10B981',
-    opacity: 0.6,
+    opacity: 0.5,
   },
   squadPillText: {
     color: colors.textPrimary,
-    fontSize: 12,
-    fontWeight: '700',
+    fontSize: typography.sizes.xs,
+    fontWeight: typography.weights.semibold,
   },
 });

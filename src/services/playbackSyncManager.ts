@@ -9,6 +9,17 @@ import type {
   JamEmojiReaction,
   PartyGameEvent,
   FriendRequest,
+  GameInvite,
+  JamRoomActivity,
+  JamLyricsSync,
+  JamVoiceSnippet,
+  JamHostState,
+  JamDjOverrideAction,
+  UserPresence,
+  LiveActivityFeedItem,
+  OnlineDuelState,
+  OnlineDuelType,
+  TriviaDuelSettings,
 } from '../types';
 
 type SyncStateCallback = (state: SyncState) => void;
@@ -17,9 +28,23 @@ type QueueStateCallback = (state: JamQueueState) => void;
 type ChatMessageCallback = (msg: JamChatMessage) => void;
 type EmojiReactionCallback = (reaction: JamEmojiReaction) => void;
 type GameEventCallback = (event: PartyGameEvent) => void;
+type DuelStateCallback = (state: OnlineDuelState | null) => void;
+type DuelErrorCallback = (message: string) => void;
 type FriendRequestCallback = (req: FriendRequest) => void;
 type FriendAcceptCallback = (data: { from: { username: string; tag: string }; to: { username: string; tag: string }; requestId: string }) => void;
 type FriendDeclineCallback = (data: { from: { username: string; tag: string }; to: { username: string; tag: string }; requestId: string }) => void;
+type GameInviteCallback = (invite: GameInvite) => void;
+type GameInviteErrorCallback = (message: string) => void;
+type GameInviteSentCallback = (username: string) => void;
+type RoomActivityCallback = (activity: JamRoomActivity) => void;
+type LyricsSyncCallback = (lyrics: JamLyricsSync) => void;
+type VoiceSnippetCallback = (snippet: JamVoiceSnippet) => void;
+type HostStateCallback = (host: JamHostState) => void;
+type MutedUsersCallback = (mutedUsers: string[]) => void;
+type VolumeWeightCallback = (weight: number) => void;
+type PresenceSyncCallback = (presences: UserPresence[]) => void;
+type ActivityFeedUpdateCallback = (item: LiveActivityFeedItem) => void;
+type ActivityFeedSyncCallback = (feed: LiveActivityFeedItem[]) => void;
 
 /**
  * PlaybackSyncManager — owns the Socket.io connection to the Jam sync server.
@@ -28,6 +53,8 @@ type FriendDeclineCallback = (data: { from: { username: string; tag: string }; t
 class PlaybackSyncManager {
   private socket: Socket | null = null;
   private currentRoomId: string | null = null;
+  private lastDuelState: OnlineDuelState | null = null;
+  private currentUsername: string | null = null;
   private userInboxRoomId: string | null = null;
   private resyncInterval: ReturnType<typeof setInterval> | null = null;
   private syncStateCallbacks: Set<SyncStateCallback> = new Set();
@@ -36,9 +63,23 @@ class PlaybackSyncManager {
   private chatMessageCallbacks: Set<ChatMessageCallback> = new Set();
   private emojiReactionCallbacks: Set<EmojiReactionCallback> = new Set();
   private gameEventCallbacks: Set<GameEventCallback> = new Set();
+  private duelStateCallbacks: Set<DuelStateCallback> = new Set();
+  private duelErrorCallbacks: Set<DuelErrorCallback> = new Set();
   private friendRequestCallbacks: Set<FriendRequestCallback> = new Set();
   private friendAcceptCallbacks: Set<FriendAcceptCallback> = new Set();
   private friendDeclineCallbacks: Set<FriendDeclineCallback> = new Set();
+  private gameInviteCallbacks: Set<GameInviteCallback> = new Set();
+  private gameInviteErrorCallbacks: Set<GameInviteErrorCallback> = new Set();
+  private gameInviteSentCallbacks: Set<GameInviteSentCallback> = new Set();
+  private roomActivityCallbacks: Set<RoomActivityCallback> = new Set();
+  private lyricsSyncCallbacks: Set<LyricsSyncCallback> = new Set();
+  private voiceSnippetCallbacks: Set<VoiceSnippetCallback> = new Set();
+  private hostStateCallbacks: Set<HostStateCallback> = new Set();
+  private mutedUsersCallbacks: Set<MutedUsersCallback> = new Set();
+  private volumeWeightCallbacks: Set<VolumeWeightCallback> = new Set();
+  private presenceCallbacks: Set<PresenceSyncCallback> = new Set();
+  private activityFeedUpdateCallbacks: Set<ActivityFeedUpdateCallback> = new Set();
+  private activityFeedSyncCallbacks: Set<ActivityFeedSyncCallback> = new Set();
 
   /**
    * Connect to the sync server.
@@ -48,13 +89,17 @@ class PlaybackSyncManager {
 
     this.socket = io(CONFIG.SYNC_SERVER_URL, {
       transports: ['websocket'],
+      query: this.currentUsername ? { username: this.currentUsername } : undefined,
       reconnection: true,
-      reconnectionAttempts: 10,
+      reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,
     });
 
     this.socket.on('connect', () => {
       console.log('[SyncManager] Connected to server');
+      if (this.currentUsername) {
+        this.socket?.emit('register-user', this.currentUsername);
+      }
       // Re-join room if we were in one (reconnection scenario)
       if (this.currentRoomId) {
         this.socket?.emit('join-room', this.currentRoomId);
@@ -72,6 +117,17 @@ class PlaybackSyncManager {
     this.socket.on('member-count', (count: number) => {
       this.memberCountCallbacks.forEach((cb) => cb(count));
     });
+
+    this.socket.on('duel-state', (state: OnlineDuelState) => {
+      this.lastDuelState = state;
+      this.duelStateCallbacks.forEach((cb) => cb(state));
+    });
+    this.socket.on('duel-error', (message: string) => {
+      this.duelErrorCallbacks.forEach((cb) => cb(message));
+    });
+    this.socket.on('game-invite', (invite: GameInvite) => this.gameInviteCallbacks.forEach((cb) => cb(invite)));
+    this.socket.on('game-invite-error', (message: string) => this.gameInviteErrorCallbacks.forEach((cb) => cb(message)));
+    this.socket.on('game-invite-sent', (data: { username: string }) => this.gameInviteSentCallbacks.forEach((cb) => cb(data.username)));
 
     this.socket.on('queue-state', (state: JamQueueState) => {
       this.queueStateCallbacks.forEach((cb) => cb(state));
@@ -123,6 +179,42 @@ class PlaybackSyncManager {
       this.emojiReactionCallbacks.forEach((cb) => cb(reaction));
     });
 
+    this.socket.on('room-activity', (activity: JamRoomActivity) => {
+      this.roomActivityCallbacks.forEach((cb) => cb(activity));
+    });
+
+    this.socket.on('lyrics-sync', (lyrics: JamLyricsSync) => {
+      this.lyricsSyncCallbacks.forEach((cb) => cb(lyrics));
+    });
+
+    this.socket.on('voice-snippet', (snippet: JamVoiceSnippet) => {
+      this.voiceSnippetCallbacks.forEach((cb) => cb(snippet));
+    });
+
+    this.socket.on('host-state', (host: JamHostState) => {
+      this.hostStateCallbacks.forEach((cb) => cb(host));
+    });
+
+    this.socket.on('muted-users-update', (mutedUsers: string[]) => {
+      this.mutedUsersCallbacks.forEach((cb) => cb(mutedUsers));
+    });
+
+    this.socket.on('volume-weight-update', (data: { volumeWeight: number }) => {
+      this.volumeWeightCallbacks.forEach((cb) => cb(data.volumeWeight));
+    });
+
+    this.socket.on('presence-sync', (presences: UserPresence[]) => {
+      this.presenceCallbacks.forEach((cb) => cb(presences));
+    });
+
+    this.socket.on('activity-feed-update', (item: LiveActivityFeedItem) => {
+      this.activityFeedUpdateCallbacks.forEach((cb) => cb(item));
+    });
+
+    this.socket.on('activity-feed-sync', (feed: LiveActivityFeedItem[]) => {
+      this.activityFeedSyncCallbacks.forEach((cb) => cb(feed));
+    });
+
     this.socket.on('disconnect', () => {
       console.log('[SyncManager] Disconnected from server');
     });
@@ -138,6 +230,7 @@ class PlaybackSyncManager {
   disconnect(): void {
     this.stopResync();
     this.currentRoomId = null;
+    this.lastDuelState = null;
     if (this.socket) {
       this.socket.removeAllListeners();
       this.socket.disconnect();
@@ -150,9 +243,62 @@ class PlaybackSyncManager {
    */
   joinRoom(roomId: string): void {
     if (!this.socket) this.connect();
+    if (this.currentRoomId !== roomId) this.lastDuelState = null;
     this.currentRoomId = roomId;
+    if (this.currentUsername && this.socket?.connected) {
+      this.socket.emit('register-user', this.currentUsername);
+    }
     this.socket!.emit('join-room', roomId);
     this.startResync();
+  }
+
+  setUsername(username: string | null): void {
+    this.currentUsername = username;
+    if (username && this.socket?.connected) this.socket.emit('register-user', username);
+  }
+
+  startOnlineDuel(type: OnlineDuelType, settings?: TriviaDuelSettings): void {
+    if (!this.socket || !this.currentRoomId) return;
+    this.socket.emit('duel-start', { roomId: this.currentRoomId, type, settings });
+  }
+
+  sendDuelAction(action: Record<string, unknown>): void {
+    if (!this.socket || !this.currentRoomId) return;
+    this.socket.emit('duel-action', { roomId: this.currentRoomId, action });
+  }
+
+  sendGameInvite(targetUsername: string, targetTag: string, roomId: string): void {
+    if (!this.socket || !this.socket.connected) {
+      this.gameInviteErrorCallbacks.forEach((cb) => cb('Connect to Jam before inviting a friend.'));
+      return;
+    }
+    this.socket.emit('game-invite-send', { targetUsername, targetTag, roomId });
+  }
+
+  onGameInvite(cb: GameInviteCallback): () => void {
+    this.gameInviteCallbacks.add(cb);
+    return () => this.gameInviteCallbacks.delete(cb);
+  }
+
+  onGameInviteError(cb: GameInviteErrorCallback): () => void {
+    this.gameInviteErrorCallbacks.add(cb);
+    return () => this.gameInviteErrorCallbacks.delete(cb);
+  }
+
+  onGameInviteSent(cb: GameInviteSentCallback): () => void {
+    this.gameInviteSentCallbacks.add(cb);
+    return () => this.gameInviteSentCallbacks.delete(cb);
+  }
+
+  onDuelState(cb: DuelStateCallback): () => void {
+    this.duelStateCallbacks.add(cb);
+    if (this.lastDuelState) cb(this.lastDuelState);
+    return () => this.duelStateCallbacks.delete(cb);
+  }
+
+  onDuelError(cb: DuelErrorCallback): () => void {
+    this.duelErrorCallbacks.add(cb);
+    return () => this.duelErrorCallbacks.delete(cb);
   }
 
   /**
@@ -161,6 +307,7 @@ class PlaybackSyncManager {
   leaveRoom(): void {
     this.stopResync();
     this.currentRoomId = null;
+    this.lastDuelState = null;
     // Disconnecting and reconnecting is the cleanest way to leave a socket.io room
     // since the server tracks rooms by socket connection
     if (this.socket) {
@@ -254,6 +401,26 @@ class PlaybackSyncManager {
       roomId: this.currentRoomId,
       songId,
     });
+  }
+
+  /**
+   * Emit a queue-vote / upvote for a song in the current room.
+   */
+  emitQueueVote(songId: string, voter?: string): void {
+    if (!this.socket || !this.currentRoomId) return;
+    this.socket.emit('queue-vote', {
+      roomId: this.currentRoomId,
+      songId,
+      voter,
+    });
+  }
+
+  /**
+   * Subscribe to room activity events (e.g. song added, player joined).
+   */
+  onRoomActivity(callback: RoomActivityCallback): () => void {
+    this.roomActivityCallbacks.add(callback);
+    return () => this.roomActivityCallbacks.delete(callback);
   }
 
   /**
@@ -429,6 +596,157 @@ class PlaybackSyncManager {
   }
 
   /**
+   * Subscribe to synchronized lyrics
+   */
+  onLyricsSync(cb: LyricsSyncCallback): () => void {
+    this.lyricsSyncCallbacks.add(cb);
+    return () => this.lyricsSyncCallbacks.delete(cb);
+  }
+
+  /**
+   * Broadcast current synchronized lyric line to room
+   */
+  emitLyricsSync(lyrics: { lineIndex: number; lineText: string; timestamp?: number }): void {
+    if (!this.socket || !this.currentRoomId) return;
+    this.socket.emit('lyrics-sync', {
+      roomId: this.currentRoomId,
+      lineIndex: lyrics.lineIndex,
+      lineText: lyrics.lineText,
+      timestamp: lyrics.timestamp || Date.now(),
+    });
+  }
+
+  /**
+   * Subscribe to voice snippets from room members
+   */
+  onVoiceSnippet(cb: VoiceSnippetCallback): () => void {
+    this.voiceSnippetCallbacks.add(cb);
+    return () => this.voiceSnippetCallbacks.delete(cb);
+  }
+
+  /**
+   * Send a recorded voice snippet to the room
+   */
+  emitVoiceSnippet(snippet: { audioBase64: string; durationMs: number; user: { username: string } }): void {
+    if (!this.socket || !this.currentRoomId) return;
+    this.socket.emit('voice-snippet', {
+      roomId: this.currentRoomId,
+      audioBase64: snippet.audioBase64,
+      durationMs: snippet.durationMs,
+      user: snippet.user,
+    });
+  }
+
+  /**
+   * Subscribe to DJ Host state (hostSocketId, volumeWeight, mutedUsers)
+   */
+  onHostState(cb: HostStateCallback): () => void {
+    this.hostStateCallbacks.add(cb);
+    return () => this.hostStateCallbacks.delete(cb);
+  }
+
+  /**
+   * Send DJ Host override (force skip, mute user, volume weighting)
+   */
+  emitDjOverride(override: JamDjOverrideAction): void {
+    if (!this.socket || !this.currentRoomId) return;
+    this.socket.emit('dj-override', {
+      roomId: this.currentRoomId,
+      type: override.type,
+      targetUser: override.targetUser,
+      volumeWeight: override.volumeWeight,
+    });
+  }
+
+  updateRoomPermissions(permissions: { allowGuestQueue: boolean; allowGuestPlayback: boolean }): void {
+    if (!this.socket || !this.currentRoomId) return;
+    this.socket.emit('room-permissions', { roomId: this.currentRoomId, ...permissions });
+  }
+
+  /**
+   * Subscribe to muted users list updates
+   */
+  onMutedUsersUpdate(cb: MutedUsersCallback): () => void {
+    this.mutedUsersCallbacks.add(cb);
+    return () => this.mutedUsersCallbacks.delete(cb);
+  }
+
+  /**
+   * Subscribe to room volume weight updates
+   */
+  onVolumeWeightUpdate(cb: VolumeWeightCallback): () => void {
+    this.volumeWeightCallbacks.add(cb);
+    return () => this.volumeWeightCallbacks.delete(cb);
+  }
+
+  /**
+   * Broadcast local presence and listening state
+   */
+  emitPresenceUpdate(presence: {
+    username: string;
+    tag: string;
+    currentSong: { title: string; artist: string; imageUrl?: string } | null;
+    isPlaying: boolean;
+    roomId?: string | null;
+  }): void {
+    if (!this.socket?.connected) return;
+    this.socket.emit('presence-update', presence);
+  }
+
+  /**
+   * Request global presence sync
+   */
+  requestPresenceSync(): void {
+    if (!this.socket?.connected) return;
+    this.socket.emit('get-presence');
+  }
+
+  /**
+   * Subscribe to live presence updates
+   */
+  onPresenceSync(cb: PresenceSyncCallback): () => void {
+    this.presenceCallbacks.add(cb);
+    return () => this.presenceCallbacks.delete(cb);
+  }
+
+  /**
+   * Emit an activity event (room created, track upvoted, playlist added, vibe started)
+   */
+  emitActivityEvent(event: {
+    type: 'room_created' | 'track_upvoted' | 'playlist_added' | 'vibe_started';
+    user: { username: string; tag?: string };
+    meta: string;
+    roomId?: string;
+  }): void {
+    if (!this.socket?.connected) return;
+    this.socket.emit('activity-event', event);
+  }
+
+  /**
+   * Request initial activity feed
+   */
+  requestActivityFeedSync(): void {
+    if (!this.socket?.connected) return;
+    this.socket.emit('get-activity-feed');
+  }
+
+  /**
+   * Subscribe to real-time activity feed events
+   */
+  onActivityFeedUpdate(cb: ActivityFeedUpdateCallback): () => void {
+    this.activityFeedUpdateCallbacks.add(cb);
+    return () => this.activityFeedUpdateCallbacks.delete(cb);
+  }
+
+  /**
+   * Subscribe to full activity feed sync
+   */
+  onActivityFeedSync(cb: ActivityFeedSyncCallback): () => void {
+    this.activityFeedSyncCallbacks.add(cb);
+    return () => this.activityFeedSyncCallbacks.delete(cb);
+  }
+
+  /**
    * Whether we're currently connected and in a room.
    */
   get isConnected(): boolean {
@@ -437,6 +755,10 @@ class PlaybackSyncManager {
 
   get roomId(): string | null {
     return this.currentRoomId;
+  }
+
+  get socketId(): string | null {
+    return this.socket?.id ?? null;
   }
 
   // ─── Private ─────────────────────────────────────────────────────────────

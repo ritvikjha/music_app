@@ -7,10 +7,9 @@ import {
   ScrollView,
   ActivityIndicator,
   StyleSheet,
-  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { BlurView } from 'expo-blur';
+import * as Haptics from 'expo-haptics';
 import { colors, spacing, borderRadius, typography } from '../theme';
 import type { Song } from '../types';
 
@@ -19,6 +18,7 @@ interface LyricsModalProps {
   onClose: () => void;
   song: Song | null;
   positionMs?: number;
+  onSeek?: (ms: number) => void;
 }
 
 interface SyncedLine {
@@ -48,12 +48,20 @@ function parseLrc(lrc: string): SyncedLine[] {
   return result;
 }
 
-export function LyricsModal({ visible, onClose, song, positionMs = 0 }: LyricsModalProps) {
+export function LyricsModal({
+  visible,
+  onClose,
+  song,
+  positionMs = 0,
+  onSeek,
+}: LyricsModalProps) {
   const [loading, setLoading] = useState(false);
   const [plainLyrics, setPlainLyrics] = useState<string | null>(null);
   const [syncedLyrics, setSyncedLyrics] = useState<SyncedLine[]>([]);
   const [hasError, setHasError] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
+  const userScrollingRef = useRef(false);
+  const userScrollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (!visible || !song) return;
@@ -122,17 +130,61 @@ export function LyricsModal({ visible, onClose, song, positionMs = 0 }: LyricsMo
     }
   }
 
+  // Smooth auto-scroll following the active karaoke line
+  useEffect(() => {
+    if (
+      activeIndex >= 0 &&
+      scrollRef.current &&
+      syncedLyrics.length > 0 &&
+      !userScrollingRef.current
+    ) {
+      scrollRef.current.scrollTo({
+        y: Math.max(0, activeIndex * 54 - 150),
+        animated: true,
+      });
+    }
+  }, [activeIndex, syncedLyrics.length]);
+
+  const handleLinePress = (timeMs: number) => {
+    try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } catch {}
+    if (onSeek) {
+      onSeek(timeMs);
+    }
+  };
+
+  const handleScrollBeginDrag = () => {
+    userScrollingRef.current = true;
+    if (userScrollTimeoutRef.current) clearTimeout(userScrollTimeoutRef.current);
+  };
+
+  const handleScrollEndDrag = () => {
+    // Resume auto-scroll after 3 seconds of user inactivity
+    userScrollTimeoutRef.current = setTimeout(() => {
+      userScrollingRef.current = false;
+    }, 3000);
+  };
+
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <View style={styles.overlay}>
         <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={onClose} />
 
         <View style={styles.sheetContainer}>
+          <View style={styles.dragHandleContainer}>
+            <View style={styles.dragHandle} />
+          </View>
           {/* Header */}
           <View style={styles.header}>
             <View style={styles.headerTitleRow}>
               <Ionicons name="mic" size={20} color={colors.accent} />
-              <Text style={styles.title}>Lyrics</Text>
+              <Text style={styles.title}>Live Lyrics</Text>
+              {syncedLyrics.length > 0 && (
+                <View style={styles.syncBadge}>
+                  <Text style={styles.syncBadgeText}>SYNCED</Text>
+                </View>
+              )}
             </View>
             <TouchableOpacity
               onPress={onClose}
@@ -146,12 +198,17 @@ export function LyricsModal({ visible, onClose, song, positionMs = 0 }: LyricsMo
           {/* Song Subheader */}
           {song && (
             <View style={styles.songSubheader}>
-              <Text style={styles.songTitle} numberOfLines={1}>
-                {song.title}
-              </Text>
-              <Text style={styles.songArtist} numberOfLines={1}>
-                {song.artist}
-              </Text>
+              <View style={styles.songSubheaderInfo}>
+                <Text style={styles.songTitle} numberOfLines={1}>
+                  {song.title}
+                </Text>
+                <Text style={styles.songArtist} numberOfLines={1}>
+                  {song.artist}
+                </Text>
+              </View>
+              {syncedLyrics.length > 0 && (
+                <Text style={styles.tapTip}>Tap line to jump</Text>
+              )}
             </View>
           )}
 
@@ -160,7 +217,7 @@ export function LyricsModal({ visible, onClose, song, positionMs = 0 }: LyricsMo
             {loading ? (
               <View style={styles.centerContainer}>
                 <ActivityIndicator size="large" color={colors.accent} />
-                <Text style={styles.statusText}>Searching for lyrics...</Text>
+                <Text style={styles.statusText}>Searching for live lyrics...</Text>
               </View>
             ) : hasError || (!plainLyrics && syncedLyrics.length === 0) ? (
               <View style={styles.centerContainer}>
@@ -180,19 +237,37 @@ export function LyricsModal({ visible, onClose, song, positionMs = 0 }: LyricsMo
                 ref={scrollRef}
                 showsVerticalScrollIndicator={false}
                 contentContainerStyle={styles.lyricsScroll}
+                onScrollBeginDrag={handleScrollBeginDrag}
+                onScrollEndDrag={handleScrollEndDrag}
               >
                 {syncedLyrics.map((line, idx) => {
                   const isActive = idx === activeIndex;
+                  const isPast = idx < activeIndex;
+
                   return (
-                    <Text
+                    <TouchableOpacity
                       key={`sync-${idx}`}
+                      onPress={() => handleLinePress(line.timeMs)}
+                      activeOpacity={0.75}
                       style={[
-                        styles.syncedLine,
-                        isActive && styles.activeSyncedLine,
+                        styles.syncedLineRow,
+                        isActive && styles.activeSyncedLineRow,
                       ]}
                     >
-                      {line.text || '♪'}
-                    </Text>
+                      {isActive && <View style={styles.karaokeGlowDot} />}
+                      <Text
+                        style={[
+                          styles.syncedLine,
+                          isActive
+                            ? styles.activeSyncedLine
+                            : isPast
+                            ? styles.pastSyncedLine
+                            : styles.futureSyncedLine,
+                        ]}
+                      >
+                        {line.text || '♪'}
+                      </Text>
+                    </TouchableOpacity>
                   );
                 })}
               </ScrollView>
@@ -215,19 +290,27 @@ const styles = StyleSheet.create({
   overlay: {
     flex: 1,
     justifyContent: 'flex-end',
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
   },
   backdrop: {
     flex: 1,
   },
   sheetContainer: {
-    height: '80%',
-    backgroundColor: '#121118',
-    borderTopLeftRadius: borderRadius.xl,
-    borderTopRightRadius: borderRadius.xl,
-    borderWidth: 1,
-    borderColor: colors.accentAlpha25,
-    paddingTop: spacing.md,
+    height: '82%',
+    backgroundColor: '#282828',
+    borderTopLeftRadius: 12,
+    borderTopRightRadius: 12,
+    paddingTop: 4,
+  },
+  dragHandleContainer: {
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  dragHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
   },
   header: {
     flexDirection: 'row',
@@ -246,6 +329,20 @@ const styles = StyleSheet.create({
     fontWeight: typography.weights.bold,
     color: colors.textPrimary,
   },
+  syncBadge: {
+    backgroundColor: colors.accentAlpha10,
+    borderWidth: 1,
+    borderColor: colors.accentAlpha25,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: borderRadius.sm,
+  },
+  syncBadgeText: {
+    color: colors.accent,
+    fontSize: 9,
+    fontWeight: typography.weights.bold,
+    letterSpacing: 0.8,
+  },
   closeBtn: {
     width: 32,
     height: 32,
@@ -255,10 +352,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   songSubheader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: spacing.lg,
     paddingBottom: spacing.md,
     borderBottomWidth: 1,
     borderBottomColor: colors.divider,
+  },
+  songSubheaderInfo: {
+    flex: 1,
+    marginRight: spacing.sm,
   },
   songTitle: {
     fontSize: typography.sizes.sm,
@@ -269,6 +373,11 @@ const styles = StyleSheet.create({
     fontSize: typography.sizes.xs,
     color: colors.textSecondary,
     marginTop: 2,
+  },
+  tapTip: {
+    fontSize: typography.sizes.xs,
+    color: colors.textMuted,
+    fontStyle: 'italic',
   },
   contentContainer: {
     flex: 1,
@@ -300,22 +409,43 @@ const styles = StyleSheet.create({
   },
   lyricsScroll: {
     paddingVertical: spacing.xl,
-    paddingBottom: 60,
+    paddingBottom: 80,
+  },
+  syncedLineRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 6,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: borderRadius.sm,
+  },
+  activeSyncedLineRow: {
+    backgroundColor: 'rgba(29, 185, 84, 0.12)',
+  },
+  karaokeGlowDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.accent,
+    marginRight: 10,
   },
   syncedLine: {
     fontSize: typography.sizes.lg,
-    fontWeight: typography.weights.medium,
-    color: 'rgba(230, 226, 240, 0.35)',
-    marginVertical: 8,
-    lineHeight: 28,
+    lineHeight: 30,
+    flex: 1,
   },
   activeSyncedLine: {
-    fontSize: typography.sizes.xl,
+    fontSize: 22,
     fontWeight: typography.weights.bold,
-    color: colors.accent,
-    textShadowColor: colors.accentAlpha25,
-    textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 10,
+    color: '#FFFFFF',
+  },
+  pastSyncedLine: {
+    fontWeight: typography.weights.medium,
+    color: 'rgba(255, 255, 255, 0.75)',
+  },
+  futureSyncedLine: {
+    fontWeight: typography.weights.regular,
+    color: 'rgba(255, 255, 255, 0.35)',
   },
   plainLyricsText: {
     fontSize: typography.sizes.md,

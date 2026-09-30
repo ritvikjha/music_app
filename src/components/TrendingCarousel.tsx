@@ -11,12 +11,13 @@ import {
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
+import { AnimatedEqualizer } from './AnimatedEqualizer';
 import { colors, spacing, borderRadius, typography, shadows } from '../theme';
 import type { Song } from '../types';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const CARD_WIDTH = SCREEN_WIDTH * 0.42;
-const CARD_HEIGHT = CARD_WIDTH * 1.25;
+const CARD_WIDTH = Math.min(SCREEN_WIDTH * 0.44, 175);
+const CARD_HEIGHT = CARD_WIDTH * 1.28;
 
 interface TrendingCarouselProps {
   songs: Song[];
@@ -42,7 +43,7 @@ function TrendingCard({
 
   const handlePressIn = () => {
     RNAnimated.timing(scaleAnim, {
-      toValue: 0.95,
+      toValue: 0.96,
       duration: 100,
       useNativeDriver: true,
     }).start();
@@ -67,39 +68,17 @@ function TrendingCard({
         }}
         onPressIn={handlePressIn}
         onPressOut={handlePressOut}
-        activeOpacity={0.9}
+        activeOpacity={0.92}
         style={[styles.card, isActive && styles.cardActive]}
       >
         <Image source={{ uri: song.imageUrl }} style={styles.cardImage} />
 
-        {/* Cyber rank badge */}
+        {/* Futuristic rank badge on top-left */}
         <View style={styles.rankBadge}>
           <Text style={styles.rankText}>#{rankStr}</Text>
         </View>
 
-        {/* Gradient overlay at bottom */}
-        <View style={styles.cardGradient}>
-          <View style={styles.cardGradientInner} />
-        </View>
-
-        {/* Song info overlay */}
-        <View style={styles.cardInfo}>
-          <Text style={styles.cardTitle} numberOfLines={1}>
-            {song.title}
-          </Text>
-          <Text style={styles.cardArtist} numberOfLines={1}>
-            {song.artist}
-          </Text>
-        </View>
-
-        {/* Play indicator for active card */}
-        {isActive && (
-          <View style={styles.activeIndicator}>
-            <Ionicons name="musical-note" size={12} color={colors.accent} />
-          </View>
-        )}
-
-        {/* Quick add to queue button */}
+        {/* Quick add to queue button on top-right */}
         {onAddToQueue && (
           <TouchableOpacity
             style={styles.queueBtn}
@@ -110,17 +89,41 @@ function TrendingCard({
             }}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
-            <Ionicons name="add-circle" size={22} color={colors.accent} />
+            <Ionicons name="add" size={16} color="#FFFFFF" />
           </TouchableOpacity>
         )}
+
+        {/* Center Active Equalizer or Play Overlay */}
+        {isActive ? (
+          <View style={styles.activeCenterBadge}>
+            <AnimatedEqualizer size={20} color={colors.accent} />
+          </View>
+        ) : (
+          <View style={styles.playIconOverlay}>
+            <Ionicons name="play" size={14} color="#FFFFFF" style={{ marginLeft: 2 }} />
+          </View>
+        )}
+
+        {/* Dark translucent backdrop gradient overlay for text */}
+        <View style={styles.cardGradient} />
+
+        {/* Song info overlay at bottom */}
+        <View style={styles.cardInfo}>
+          <Text style={[styles.cardTitle, isActive && styles.cardTitleActive]} numberOfLines={2}>
+            {song.title}
+          </Text>
+          <Text style={styles.cardArtist} numberOfLines={1}>
+            {song.artist}
+          </Text>
+        </View>
       </TouchableOpacity>
     </RNAnimated.View>
   );
 }
 
 /**
- * Horizontal carousel of trending song cards with album art,
- * gradient overlay, and press animations.
+ * Enhanced Horizontal carousel of trending song cards with glowing ranks,
+ * active animated equalizer badges, and touch response.
  */
 export function TrendingCarousel({
   songs,
@@ -133,8 +136,13 @@ export function TrendingCarousel({
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Ionicons name="trending-up" size={18} color={colors.accent} />
-        <Text style={styles.headerTitle}>Trending Now</Text>
+        <View style={styles.headerTitleWrap}>
+          <Ionicons name="flame" size={18} color={colors.accent} />
+          <Text style={styles.headerTitle}>Trending now</Text>
+        </View>
+        <View style={styles.countBadge}>
+          <Text style={styles.countText}>{songs.length} songs</Text>
+        </View>
       </View>
       <FlatList
         data={songs}
@@ -158,117 +166,146 @@ export function TrendingCarousel({
 
 const styles = StyleSheet.create({
   container: {
-    marginBottom: spacing.lg,
+    marginBottom: spacing.xl,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.sm,
-    paddingHorizontal: spacing.lg,
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.screen,
     marginBottom: spacing.md,
   },
+  headerTitleWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs + 2,
+  },
   headerTitle: {
-    fontSize: typography.sizes.md,
-    fontWeight: typography.weights.bold,
+    fontSize: 20,
+    fontWeight: '700',
     color: colors.textPrimary,
-    letterSpacing: 0.8,
-    textTransform: 'uppercase',
+    letterSpacing: -0.3,
+  },
+  countBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: borderRadius.full,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  countText: {
+    fontSize: 10,
+    fontWeight: typography.weights.bold,
+    color: colors.textSecondary,
+    letterSpacing: 0.5,
   },
   listContent: {
-    paddingHorizontal: spacing.lg,
+    paddingHorizontal: spacing.screen,
     gap: spacing.md,
   },
   cardWrapper: {
-    // Allows shadow to be visible
-  },
-  rankBadge: {
-    position: 'absolute',
-    top: spacing.sm,
-    left: spacing.sm,
-    backgroundColor: 'rgba(5, 5, 8, 0.8)',
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    borderRadius: borderRadius.sm,
-    borderWidth: 1,
-    borderColor: 'rgba(0, 242, 254, 0.4)',
-    zIndex: 2,
-  },
-  rankText: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: colors.accent,
-    letterSpacing: 0.5,
+    borderRadius: borderRadius.lg,
   },
   card: {
     width: CARD_WIDTH,
     height: CARD_HEIGHT,
-    borderRadius: borderRadius.lg,
+    borderRadius: 8,
     overflow: 'hidden',
-    backgroundColor: colors.backgroundElevated,
-    ...shadows.cardShadow,
+    backgroundColor: '#181818',
+    position: 'relative',
   },
   cardActive: {
-    borderWidth: 1.5,
+    borderWidth: 1,
     borderColor: colors.accent,
-    ...shadows.lavenderGlow,
   },
   cardImage: {
     width: '100%',
     height: '100%',
     resizeMode: 'cover',
   },
+  rankBadge: {
+    position: 'absolute',
+    top: spacing.sm,
+    left: spacing.sm,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 4,
+    zIndex: 2,
+  },
+  rankText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    letterSpacing: 0.5,
+  },
+  queueBtn: {
+    position: 'absolute',
+    top: spacing.sm,
+    right: spacing.sm,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 2,
+  },
+  activeCenterBadge: {
+    position: 'absolute',
+    top: '36%',
+    alignSelf: 'center',
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(0, 0, 0, 0.85)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 2,
+  },
+  playIconOverlay: {
+    position: 'absolute',
+    top: '36%',
+    alignSelf: 'center',
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    opacity: 0.85,
+    zIndex: 2,
+  },
   cardGradient: {
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
-    height: '55%',
-  },
-  cardGradientInner: {
-    flex: 1,
-    // Simulated gradient using backgroundColor with opacity
-    backgroundColor: 'rgba(10, 10, 15, 0.85)',
-    // Only show at bottom half
-    marginTop: '45%',
+    height: '65%',
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
   },
   cardInfo: {
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
-    padding: spacing.md,
-    backgroundColor: 'rgba(10, 10, 15, 0.7)',
+    padding: 10,
+    zIndex: 3,
   },
   cardTitle: {
-    fontSize: typography.sizes.sm,
-    fontWeight: typography.weights.semibold,
-    color: colors.textPrimary,
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FFFFFF',
     marginBottom: 2,
+    lineHeight: 16,
+  },
+  cardTitleActive: {
+    color: colors.accent,
   },
   cardArtist: {
-    fontSize: typography.sizes.xs,
-    color: colors.textSecondary,
-  },
-  activeIndicator: {
-    position: 'absolute',
-    top: spacing.sm,
-    left: spacing.sm,
-    backgroundColor: colors.accentAlpha25,
-    paddingHorizontal: 6,
-    paddingVertical: 3,
-    borderRadius: borderRadius.full,
-    borderWidth: 1,
-    borderColor: colors.accentAlpha25,
-  },
-  queueBtn: {
-    position: 'absolute',
-    top: spacing.sm,
-    right: spacing.sm,
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
+    fontSize: 11,
+    color: '#B3B3B3',
+    fontWeight: '400',
   },
 });

@@ -12,6 +12,8 @@ import { JamProvider } from '../context/JamContext';
 import { ToastProvider } from '../context/ToastContext';
 import { SleepTimerProvider } from '../context/SleepTimerContext';
 import { colors } from '../theme';
+import { OfflineStatusPill } from '../components/OfflineStatusPill';
+import { GameInviteListener } from '../components/GameInviteListener';
 
 /**
  * Root layout — wraps the entire app in providers and configures
@@ -33,6 +35,8 @@ export default function RootLayout() {
                   <JamProvider>
                     <ToastProvider>
                     <StatusBar style="light" />
+                    <OfflineStatusPill />
+                    <GameInviteListener />
                     <Stack
                       screenOptions={{
                         headerShown: false,
@@ -47,12 +51,23 @@ export default function RootLayout() {
                         options={{
                           presentation: 'modal',
                           animation: 'slide_from_bottom',
+                          animationDuration: 280,
+                          gestureEnabled: true,
+                          gestureDirection: 'vertical',
+                          fullScreenGestureEnabled: true,
                         }}
                       />
                       <Stack.Screen
                         name="friends"
                         options={{
                           animation: 'slide_from_right',
+                        }}
+                      />
+                      <Stack.Screen
+                        name="room/[roomId]"
+                        options={{
+                          headerShown: false,
+                          animation: 'fade',
                         }}
                       />
                     </Stack>

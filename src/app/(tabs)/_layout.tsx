@@ -1,132 +1,126 @@
+import React, { useEffect } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { Tabs } from 'expo-router';
-import { Platform, View, StyleSheet } from 'react-native';
+import { ColorValue, Platform } from 'react-native';
+import Animated, { useSharedValue, useAnimatedStyle, withSpring } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { colors, typography } from '../../theme';
+import { ErrorBoundary } from '../../components/ErrorBoundary';
 
-/**
- * Tab layout — Home, Friends, Jam tabs with Midnight Cyber-Neon aesthetic.
- */
-export default function TabLayout() {
-  const insets = useSafeAreaInsets();
-  // Ensure enough bottom space for Android 3-button navigation or gesture bar
-  const bottomInset = Math.max(insets.bottom, Platform.OS === 'android' ? 24 : 8);
-  const barHeight = 58 + bottomInset;
+function TabIcon({
+  name,
+  focused,
+  color,
+}: {
+  name: keyof typeof Ionicons.glyphMap;
+  focused: boolean;
+  color: ColorValue;
+}) {
+  const scale = useSharedValue(1);
+
+  useEffect(() => {
+    scale.value = withSpring(focused ? 1.15 : 1.0, { damping: 14, stiffness: 200 });
+  }, [focused, scale]);
+
+  const animStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+  }));
 
   return (
-    <Tabs
-      screenOptions={{
-        headerStyle: {
-          backgroundColor: colors.background,
-          shadowColor: 'transparent',
-          elevation: 0,
-        },
-        headerTintColor: colors.textPrimary,
-        headerTitleStyle: {
-          fontWeight: typography.weights.bold,
-          fontSize: typography.sizes.lg,
-          letterSpacing: 0.5,
-        },
-        tabBarStyle: {
-          backgroundColor: '#090912',
-          borderTopColor: 'rgba(0, 242, 254, 0.18)',
-          borderTopWidth: 1,
-          height: barHeight,
-          paddingBottom: bottomInset + 2,
-          paddingTop: 6,
-          elevation: 16,
-          shadowColor: '#00F2FE',
-          shadowOffset: { width: 0, height: -2 },
-          shadowOpacity: 0.12,
-          shadowRadius: 10,
-        },
-        tabBarActiveTintColor: colors.accent,
-        tabBarInactiveTintColor: '#64748B',
-        tabBarLabelStyle: {
-          fontSize: 10,
-          fontWeight: '700',
-          letterSpacing: 0.4,
-          textTransform: 'uppercase',
-        },
-      }}
-    >
-      <Tabs.Screen
-        name="home"
-        options={{
-          title: 'Home',
-          headerTitle: '⚡ JAM MUSIC',
-          tabBarIcon: ({ color, size, focused }) => (
-            <View style={focused ? styles.activeIconWrap : null}>
-              <Ionicons name={focused ? 'flash' : 'flash-outline'} size={size - 1} color={color} />
-            </View>
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="library"
-        options={{
-          title: 'Playlists',
-          headerTitle: '📚 YOUR LIBRARY',
-          tabBarIcon: ({ color, size, focused }) => (
-            <View style={focused ? styles.activeIconWrap : null}>
-              <Ionicons name={focused ? 'albums' : 'albums-outline'} size={size} color={color} />
-            </View>
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="games"
-        options={{
-          title: 'Games',
-          headerTitle: '🎮 SQUAD PARTY ARCADE',
-          tabBarIcon: ({ color, size, focused }) => (
-            <View style={focused ? styles.activeIconWrap : null}>
-              <Ionicons
-                name={focused ? 'game-controller' : 'game-controller-outline'}
-                size={size + 1}
-                color={color}
-              />
-            </View>
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="jam"
-        options={{
-          title: 'Jam Room',
-          tabBarIcon: ({ color, size, focused }) => (
-            <View style={focused ? styles.activeIconWrap : null}>
-              <Ionicons name={focused ? 'radio' : 'radio-outline'} size={size} color={color} />
-            </View>
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="profile"
-        options={{
-          title: 'Profile',
-          tabBarIcon: ({ color, size, focused }) => (
-            <View style={focused ? styles.activeIconWrap : null}>
-              <Ionicons
-                name={focused ? 'person-circle' : 'person-circle-outline'}
-                size={size}
-                color={color}
-              />
-            </View>
-          ),
-        }}
-      />
-    </Tabs>
+    <Animated.View style={animStyle}>
+      <Ionicons name={name} size={24} color={color} />
+    </Animated.View>
   );
 }
 
-const styles = StyleSheet.create({
-  activeIconWrap: {
-    shadowColor: colors.accent,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.85,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-});
+/**
+ * Tab layout — Home, Library, Games, Jam Room, Profile tabs.
+ * Spotify-styled solid black tab bar with spring-scaled icons and fade transitions.
+ */
+export default function TabLayout() {
+  const insets = useSafeAreaInsets();
+  const bottomInset = Math.max(insets.bottom, Platform.OS === 'android' ? 16 : 8);
+  const barHeight = 54 + bottomInset;
 
+  return (
+    <ErrorBoundary fallbackTitle="NAVIGATION SYSTEM RECOVERED">
+      <Tabs
+        screenOptions={{
+          headerShown: false,
+          tabBarStyle: {
+            backgroundColor: '#000000',
+            borderTopWidth: 0,
+            height: barHeight,
+            paddingBottom: bottomInset + 2,
+            paddingTop: 6,
+            elevation: 0,
+            shadowColor: '#000000',
+            shadowOffset: { width: 0, height: -2 },
+            shadowOpacity: 0.4,
+            shadowRadius: 6,
+          },
+          tabBarActiveTintColor: '#FFFFFF',
+          tabBarInactiveTintColor: '#B3B3B3',
+          tabBarLabelStyle: {
+            fontSize: 10,
+            fontWeight: '500',
+            marginTop: 2,
+          },
+        }}
+      >
+        <Tabs.Screen
+          name="home"
+          options={{
+            title: 'Home',
+            tabBarIcon: ({ color, focused }) => (
+              <TabIcon name={focused ? 'flash' : 'flash-outline'} focused={focused} color={color} />
+            ),
+          }}
+        />
+        <Tabs.Screen
+          name="library"
+          options={{
+            title: 'Library',
+            tabBarIcon: ({ color, focused }) => (
+              <TabIcon name={focused ? 'albums' : 'albums-outline'} focused={focused} color={color} />
+            ),
+          }}
+        />
+        <Tabs.Screen
+          name="games"
+          options={{
+            title: 'Games',
+            tabBarIcon: ({ color, focused }) => (
+              <TabIcon
+                name={focused ? 'game-controller' : 'game-controller-outline'}
+                focused={focused}
+                color={color}
+              />
+            ),
+          }}
+        />
+        <Tabs.Screen
+          name="jam"
+          options={{
+            title: 'Jam Room',
+            tabBarIcon: ({ color, focused }) => (
+              <TabIcon name={focused ? 'radio' : 'radio-outline'} focused={focused} color={color} />
+            ),
+          }}
+        />
+        <Tabs.Screen
+          name="profile"
+          options={{
+            title: 'Profile',
+            tabBarIcon: ({ color, focused }) => (
+              <TabIcon
+                name={focused ? 'person-circle' : 'person-circle-outline'}
+                focused={focused}
+                color={color}
+              />
+            ),
+          }}
+        />
+      </Tabs>
+    </ErrorBoundary>
+  );
+}

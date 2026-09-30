@@ -11,11 +11,23 @@ import {
   Image,
   ScrollView,
   Animated as RNAnimated,
+  Switch,
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
+import {
+  useAudioRecorder,
+  RecordingPresets,
+  requestRecordingPermissionsAsync,
+  getRecordingPermissionsAsync,
+  setAudioModeAsync,
+} from 'expo-audio';
+import * as FileSystem from 'expo-file-system/legacy';
+import { audioPlayer } from '../services/audioPlayer';
+import { networkMonitor } from '../services/networkMonitor';
 import { useJam } from '../context/JamContext';
 import { usePlayer } from '../context/PlayerContext';
 import { useAuth } from '../context/AuthContext';
@@ -40,25 +52,57 @@ export default function JamRoomScreen() {
     roomId,
     memberCount,
     isConnected,
+    isHost,
+    hostUsername,
     jamQueue,
     messages,
     reactions,
+    syncedLyric,
+    mutedUsers,
+    volumeWeight,
+    allowGuestQueue,
+    allowGuestPlayback,
+    setRoomPermissions,
     createRoom,
     joinRoom,
     leaveRoom,
     jamChangeSong,
     jamAddToQueue,
     jamRemoveFromQueue,
+    jamVoteSong,
+    jamPlay,
+    jamPause,
+    jamSkipNext,
+    broadcastLyricLine,
+    sendVoiceSnippet,
+    djForceSkip,
+    djToggleMuteUser,
+    djSetVolumeWeight,
     sendMessage,
     sendReaction,
   } = useJam();
-  const { currentSong, isPlaying } = usePlayer();
+  const { currentSong, isPlaying, positionMs, durationMs } = usePlayer();
   const { user } = useAuth();
   const { showToast } = useToast();
+  const router = useRouter();
+  const isSelfMuted = Boolean(user?.username && mutedUsers.some((name) => name === user.username || name.startsWith(`${user.username}#`)));
+  const canControlPlayback = isHost || allowGuestPlayback;
+
+  // Voice snippet recording state & native audio recorder engine
+  const [isRecording, setIsRecording] = useState(false);
+  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const isRecordingRef = useRef(false);
+  const recordingStartTimeRef = useRef(0);
 
   // Tab: queue vs chat
   const [jamTab, setJamTab] = useState<'queue' | 'chat'>('queue');
   const [chatInput, setChatInput] = useState('');
+  const [isOnline, setIsOnline] = useState(networkMonitor.isOnline);
+
+  useEffect(() => {
+    const unsubscribe = networkMonitor.addListener(setIsOnline);
+    return () => { unsubscribe(); };
+  }, []);
 
   // Saved friends for in-room quick invite
   const [savedFriends, setSavedFriends] = useState<Friend[]>([]);
@@ -142,9 +186,11 @@ export default function JamRoomScreen() {
   const handleShareRoom = useCallback(async () => {
     if (roomId) {
       try {
+        const inviteLink = `jam://room/${roomId}`;
         await Share.share({
-          message: `Join my Jam music listening room! Code: ${roomId}`,
-          title: 'Jam Room Invite',
+          message: `Join my live Jam music room on Jam! 🎵\n\nRoom Code: ${roomId}\n1-Tap Join: ${inviteLink}`,
+          url: inviteLink,
+          title: `Jam Room #${roomId} Invite`,
         });
       } catch (error) {
         console.error('Share error:', error);
@@ -154,6 +200,10 @@ export default function JamRoomScreen() {
 
   const handleSearch = useCallback(async () => {
     if (!searchQuery.trim()) return;
+    if (!isOnline) {
+      showToast('You are offline. Jam search needs an internet connection.', 'error');
+      return;
+    }
     setIsSearching(true);
     try {
       const results = await searchSongs(searchQuery);
@@ -164,27 +214,35 @@ export default function JamRoomScreen() {
     } finally {
       setIsSearching(false);
     }
-  }, [searchQuery, showToast]);
+  }, [searchQuery, showToast, isOnline]);
 
   const handleSongPlayNow = useCallback(
     (song: Song) => {
+      if (!isHost && !allowGuestPlayback) {
+        showToast('The host has disabled guest playback controls.', 'info');
+        return;
+      }
       jamChangeSong(song);
       setSearchResults([]);
       setSearchQuery('');
       showToast(`Playing ${song.title}`, 'info');
     },
-    [jamChangeSong, showToast]
+    [jamChangeSong, showToast, isHost, allowGuestPlayback]
   );
 
   const handleAddToJamQueue = useCallback(
     (song: Song) => {
+      if (!isHost && !allowGuestQueue) {
+        showToast('The host has disabled guest queue suggestions.', 'info');
+        return;
+      }
       try {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       } catch {}
       jamAddToQueue(song);
       showToast(`Added ${song.title} to Jam Queue`, 'success');
     },
-    [jamAddToQueue, showToast]
+    [jamAddToQueue, showToast, isHost, allowGuestQueue]
   );
 
   const handleSongSelect = useCallback(
@@ -227,6 +285,10 @@ export default function JamRoomScreen() {
 
   const handleSendChat = () => {
     if (!chatInput.trim()) return;
+    if (isSelfMuted) {
+      showToast('The host muted chat for your account.', 'error');
+      return;
+    }
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     } catch {}
@@ -249,8 +311,10 @@ export default function JamRoomScreen() {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       } catch {}
       try {
+        const inviteLink = `jam://room/${roomId}`;
         await Share.share({
-          message: `Hey ${friend.username}! Join my live Jam session on our music app! 🎵 Enter room code: ${roomId}`,
+          message: `Hey ${friend.username}! Join my live Jam session on Jam! 🎵\nRoom Code: ${roomId}\nTap to join: ${inviteLink}`,
+          url: inviteLink,
           title: `Jam Room Invite for ${friend.username}`,
         });
         setInvitedFriends((prev) => ({ ...prev, [friend.id]: true }));
@@ -262,32 +326,141 @@ export default function JamRoomScreen() {
     [roomId, showToast]
   );
 
+  // ─── Voice Snippet Recording Handlers with Ducking & Permissions ───────
+  const handleStartRecording = useCallback(async () => {
+    if (isSelfMuted) {
+      showToast('The host muted voice messages for your account.', 'error');
+      return;
+    }
+    try {
+      // 1. Explicit permission check before starting recording
+      const perm = await getRecordingPermissionsAsync();
+      if (!perm.granted) {
+        const req = await requestRecordingPermissionsAsync();
+        if (!req.granted) {
+          Alert.alert(
+            'Microphone Permission Required',
+            'Please allow microphone permissions to record and share voice snippets in the Jam room.'
+          );
+          return;
+        }
+      }
+
+      // 2. Configure audio mode: allow recording while playback is active without crashing session
+      await setAudioModeAsync({
+        allowsRecording: true,
+        playsInSilentMode: true,
+        shouldPlayInBackground: true,
+      });
+
+      // 3. Dynamic audio ducking: reduce music to 20%
+      await audioPlayer.duckVolume(0.2);
+
+      // 4. Start recording session
+      await recorder.prepareToRecordAsync();
+      recorder.record();
+      recordingStartTimeRef.current = Date.now();
+      isRecordingRef.current = true;
+      setIsRecording(true);
+
+      try {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      } catch {}
+    } catch (err) {
+      console.warn('[JamRoomScreen] Failed to start voice recording:', err);
+      await audioPlayer.restoreVolume();
+      setIsRecording(false);
+      isRecordingRef.current = false;
+      showToast('Could not access microphone', 'error');
+    }
+  }, [recorder, showToast, isSelfMuted]);
+
+  const handleStopRecording = useCallback(async () => {
+    if (!isRecordingRef.current) return;
+    isRecordingRef.current = false;
+    setIsRecording(false);
+
+    try {
+      const elapsedMs = Date.now() - recordingStartTimeRef.current;
+      await recorder.stop();
+
+      // 1. Restore music volume back to 100%
+      await audioPlayer.restoreVolume();
+
+      // 2. Revert audio mode allowsRecording to false
+      await setAudioModeAsync({
+        allowsRecording: false,
+        playsInSilentMode: true,
+        shouldPlayInBackground: true,
+      });
+
+      if (elapsedMs < 600) {
+        showToast('Hold down to record voice note', 'info');
+        return;
+      }
+
+      const recordedUri = recorder.uri;
+      if (!recordedUri) {
+        showToast('Recording failed to capture', 'error');
+        return;
+      }
+
+      // 3. Convert snippet to base64 for Socket.io broadcast
+      const base64Data = await FileSystem.readAsStringAsync(recordedUri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+
+      if (!base64Data) {
+        showToast('Audio encoding failed', 'error');
+        return;
+      }
+
+      // 4. Broadcast over Socket.io to all jam room members
+      sendVoiceSnippet(base64Data, elapsedMs);
+
+      try {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      } catch {}
+      showToast('Voice note sent to Jam squad!', 'success');
+
+      // Clean up temporary local recording file
+      try {
+        await FileSystem.deleteAsync(recordedUri, { idempotent: true });
+      } catch {}
+    } catch (err) {
+      console.warn('[JamRoomScreen] Error stopping/sending voice snippet:', err);
+      await audioPlayer.restoreVolume();
+      showToast('Failed to send voice note', 'error');
+    }
+  }, [recorder, sendVoiceSnippet, showToast]);
+
   const currentUsername = user?.username ?? '';
 
   // ─── Not in a room ─────────────────────────────────────────────────────────
   if (!isInRoom) {
     return (
       <View style={styles.container}>
-        <View style={styles.notInRoom}>
-          {/* Hero */}
+        <ScrollView contentContainerStyle={styles.notInRoomScroll} showsVerticalScrollIndicator={false}>
+          {/* Cyber Hero */}
           <View style={styles.hero}>
-            <View style={[styles.heroIcon, shadows.lavenderGlow]}>
-              <Ionicons name="radio" size={40} color={colors.accent} />
+            <View style={styles.heroIconWrapper}>
+              <Ionicons name="radio" size={38} color={colors.accent} />
+              <View style={styles.heroAura} />
             </View>
-            <Text style={styles.heroTitle}>Start a Jam</Text>
+            <Text style={styles.heroTitle}>LIVE JAM ROOMS</Text>
             <Text style={styles.heroSubtitle}>
-              Listen to music together with friends in real-time sync
+              Stream together in sub-second sync with live voting and squad reactions
             </Text>
           </View>
 
-          {/* Create room */}
+          {/* Create room CTA */}
           <TouchableOpacity
-            style={[styles.createButton, shadows.lavenderGlow]}
+            style={styles.createButton}
             onPress={handleCreateRoom}
-            activeOpacity={0.85}
+            activeOpacity={0.88}
           >
-            <Ionicons name="add-circle" size={22} color={colors.background} />
-            <Text style={styles.createButtonText}>Create New Room</Text>
+            <Ionicons name="add-circle" size={20} color="#000000" />
+            <Text style={styles.createButtonText}>START NEW JAM SESSION</Text>
           </TouchableOpacity>
 
           {/* Divider */}
@@ -301,7 +474,7 @@ export default function JamRoomScreen() {
           <View style={styles.joinContainer}>
             <TextInput
               style={styles.joinInput}
-              placeholder="ROOM CODE"
+              placeholder="ENTER ROOM CODE"
               placeholderTextColor={colors.textSecondary}
               value={joinCode}
               onChangeText={setJoinCode}
@@ -317,12 +490,28 @@ export default function JamRoomScreen() {
               ]}
               onPress={handleJoin}
               disabled={joinCode.trim().length < 4}
-              activeOpacity={0.8}
+              activeOpacity={0.85}
             >
-              <Text style={styles.joinButtonText}>Join</Text>
+              <Text style={styles.joinButtonText}>JOIN</Text>
             </TouchableOpacity>
           </View>
-        </View>
+
+          {/* Feature Highlights Card */}
+          <View style={styles.featuresCard}>
+            <View style={styles.featureRow}>
+              <Ionicons name="flash" size={16} color={colors.accent} />
+              <Text style={styles.featureText}>Sub-second drift compensation auto-syncs all listeners</Text>
+            </View>
+            <View style={styles.featureRow}>
+              <Ionicons name="thumbs-up" size={16} color={colors.accentSecondary} />
+              <Text style={styles.featureText}>Democratic queue voting reorders upcoming tracks live</Text>
+            </View>
+            <View style={styles.featureRow}>
+              <Ionicons name="chatbubbles" size={16} color="#38BDF8" />
+              <Text style={styles.featureText}>Squad reactions & live chat with room members</Text>
+            </View>
+          </View>
+        </ScrollView>
         <MiniPlayer />
       </View>
     );
@@ -354,22 +543,22 @@ export default function JamRoomScreen() {
           <View style={styles.roomCardInner}>
             <View style={styles.roomTopRow}>
               <View style={styles.roomCodeContainer}>
-                <Text style={styles.roomLabel}>JAM ROOM CODE</Text>
+                <Text style={styles.roomLabel}>JAM ROOM</Text>
                 <View style={styles.roomCodeRow}>
-                  <Text style={styles.roomCode}>{roomId}</Text>
                   <TouchableOpacity
-                    style={styles.iconActionBtn}
+                    style={styles.roomCodeChip}
                     onPress={handleCopyCode}
-                    activeOpacity={0.7}
+                    activeOpacity={0.8}
                   >
-                    <Ionicons name="copy-outline" size={18} color={colors.accent} />
+                    <Text style={styles.roomCode}>#{roomId}</Text>
+                    <Ionicons name="copy-outline" size={13} color={colors.accent} style={{ marginLeft: 6 }} />
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={styles.iconActionBtn}
                     onPress={handleShareRoom}
                     activeOpacity={0.7}
                   >
-                    <Ionicons name="share-social-outline" size={18} color={colors.accent} />
+                    <Ionicons name="share-social-outline" size={17} color={colors.accent} />
                   </TouchableOpacity>
                 </View>
               </View>
@@ -385,30 +574,167 @@ export default function JamRoomScreen() {
                   ]}
                 />
                 <Text style={styles.connectionText}>
-                  {isConnected ? 'LIVE SYNC' : 'Reconnecting...'}
+                  {isConnected ? 'LIVE SYNC' : 'Connecting...'}
                 </Text>
               </View>
             </View>
 
-            {/* Members */}
+            {/* Members & Quick In-Room Party Games */}
             <View style={styles.membersRow}>
-              <AvatarRow count={memberCount} />
-              <Text style={styles.memberText}>
-                {memberCount} {memberCount === 1 ? "person jammin'" : "people jammin'"}
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+                <AvatarRow count={memberCount} />
+                <Text style={styles.memberText}>
+                  {memberCount} {memberCount === 1 ? 'listener' : 'listeners'}
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.partyGameBtn}
+                onPress={() => {
+                  try {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                  } catch {}
+                  router.push('/(tabs)/games');
+                }}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="game-controller" size={14} color={colors.accent} />
+                <Text style={styles.partyGameBtnText}>Play Games</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* ─── Cyber Live DJ Booth HUD ─────────────────────────────── */}
+            {currentSong ? (
+              <View style={styles.djBoothContainer}>
+                <View style={styles.djBoothHeader}>
+                  <View style={styles.djBadge}>
+                    <Ionicons name="headset" size={11} color="#000000" />
+                    <Text style={styles.djBadgeText}>LIVE DJ BOOTH</Text>
+                  </View>
+                  {isPlaying ? (
+                    <AnimatedEqualizer size={16} color={colors.accent} />
+                  ) : (
+                    <Text style={styles.djStatusPaused}>PAUSED</Text>
+                  )}
+                </View>
+
+                <View style={styles.djBoothBody}>
+                  {currentSong.imageUrl ? (
+                    <Image source={{ uri: currentSong.imageUrl }} style={styles.djArtwork} />
+                  ) : (
+                    <View style={styles.djArtworkFallback}>
+                      <Ionicons name="disc" size={24} color={colors.accent} />
+                    </View>
+                  )}
+
+                  <View style={styles.djInfo}>
+                    <Text style={styles.djTitle} numberOfLines={1}>{currentSong.title}</Text>
+                    <Text style={styles.djArtist} numberOfLines={1}>{currentSong.artist}</Text>
+                    <View style={styles.djMetaRow}>
+                      <Text style={styles.djSyncText}>⚡ LIVE SYNC</Text>
+                      {durationMs > 0 && (
+                        <Text style={styles.djDurationText}>
+                          {Math.floor(positionMs / 60000)}:{String(Math.floor((positionMs % 60000) / 1000)).padStart(2, '0')} / {Math.floor(durationMs / 60000)}:{String(Math.floor((durationMs % 60000) / 1000)).padStart(2, '0')}
+                        </Text>
+                      )}
+                    </View>
+                  </View>
+
+                  <View style={styles.djControls}>
+                    <TouchableOpacity
+                      style={[styles.djControlBtn, !canControlPlayback && styles.disabledControl]}
+                      disabled={!canControlPlayback}
+                      onPress={() => (isPlaying ? jamPause() : jamPlay())}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <Ionicons name={isPlaying ? 'pause' : 'play'} size={18} color="#FFFFFF" />
+                    </TouchableOpacity>
+
+                    {jamQueue.length > 0 && (
+                      <TouchableOpacity
+                        style={[styles.djControlBtn, !canControlPlayback && styles.disabledControl]}
+                        disabled={!canControlPlayback}
+                        onPress={jamSkipNext}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      >
+                        <Ionicons name="play-skip-forward" size={16} color={colors.textSecondary} />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                </View>
+              </View>
+            ) : (
+              <View style={styles.djEmptyContainer}>
+                <Ionicons name="disc-outline" size={22} color={colors.accent} style={{ opacity: 0.6 }} />
+                <Text style={styles.djEmptyText}>No song playing right now</Text>
+              </View>
+            )}
+
+            {/* ─── Synchronized Lyrics Broadcast HUD ────────────────── */}
+            <View style={styles.syncLyricsBanner}>
+              <View style={styles.syncLyricsHeader}>
+                <View style={styles.syncLyricsTag}>
+                  <Ionicons name="mic-outline" size={11} color={colors.accent} />
+                  <Text style={styles.syncLyricsTagText}>SYNCED LYRICS</Text>
+                </View>
+                {isHost && (
+                  <TouchableOpacity
+                    style={styles.broadcastLyricBtn}
+                    onPress={() => {
+                      const currentTitle = currentSong?.title || 'Jam Music';
+                      broadcastLyricLine(1, `♪ Sing along to ${currentTitle} ♪`);
+                      showToast('Broadcasted lyric line to room', 'success');
+                    }}
+                  >
+                    <Ionicons name="radio-outline" size={11} color="#000000" />
+                    <Text style={styles.broadcastLyricBtnText}>BROADCAST</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+              <Text style={styles.syncLyricsText}>
+                {syncedLyric?.lineText || '♪ Listening in sync with room squad ♪'}
               </Text>
             </View>
 
-            {/* Current song */}
-            {currentSong && (
-              <View style={styles.currentSongInfo}>
-                {isPlaying ? (
-                  <AnimatedEqualizer size={16} color={colors.accent} />
-                ) : (
-                  <Ionicons name="musical-notes" size={14} color={colors.accent} />
-                )}
-                <Text style={styles.currentSongText} numberOfLines={1}>
-                  {currentSong.title} — {currentSong.artist}
-                </Text>
+            {/* ─── DJ Host Overrides HUD ───────────────────────────── */}
+            {isHost && (
+              <View style={styles.djOverridesCard}>
+                <View style={styles.djOverridesHeader}>
+                  <View style={styles.djCrownBadge}>
+                    <Ionicons name="sparkles" size={11} color="#000000" />
+                    <Text style={styles.djCrownText}>DJ HOST PRIVILEGES</Text>
+                  </View>
+                  <Text style={styles.djOverrideSub}>Host Overrides</Text>
+                </View>
+                <View style={styles.djOverrideActions}>
+                  <TouchableOpacity style={styles.djOverrideBtn} onPress={djForceSkip} activeOpacity={0.8}>
+                    <Ionicons name="play-skip-forward" size={12} color="#FFFFFF" />
+                    <Text style={styles.djOverrideBtnText}>FORCE SKIP</Text>
+                  </TouchableOpacity>
+                  <View style={styles.volumeWeightGroup}>
+                    <Text style={styles.volWeightText}>Mix {Math.round(volumeWeight * 100)}%</Text>
+                    {[0.8, 1.0, 1.2].map((weight) => (
+                      <TouchableOpacity
+                        key={weight}
+                        style={[styles.volWeightChip, volumeWeight === weight && styles.volWeightChipActive]}
+                        onPress={() => djSetVolumeWeight(weight)}
+                      >
+                        <Text style={[styles.volWeightText, volumeWeight === weight && styles.volWeightTextActive]}>
+                          {Math.round(weight * 100)}%
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+                <View style={{ marginTop: 14, gap: 10 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <Text style={{ color: colors.textPrimary, fontSize: 12 }}>Guests can add songs</Text>
+                    <Switch value={allowGuestQueue} onValueChange={(value) => setRoomPermissions({ allowGuestQueue: value, allowGuestPlayback })} />
+                  </View>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <Text style={{ color: colors.textPrimary, fontSize: 12 }}>Guests can control playback</Text>
+                    <Switch value={allowGuestPlayback} onValueChange={(value) => setRoomPermissions({ allowGuestQueue, allowGuestPlayback: value })} />
+                  </View>
+                </View>
               </View>
             )}
           </View>
@@ -539,7 +865,13 @@ export default function JamRoomScreen() {
                           </Text>
                         </View>
                       )}
-                      <View style={[styles.chatBubble, isMe ? styles.chatBubbleMe : styles.chatBubbleOther]}>
+                      <View
+                        style={[
+                          styles.chatBubble,
+                          isMe ? styles.chatBubbleMe : styles.chatBubbleOther,
+                          msg.message.startsWith('🎙️') && styles.chatBubbleVoiceNote,
+                        ]}
+                      >
                         {!isMe && (
                           <Text style={styles.chatSender}>{msg.user.username}</Text>
                         )}
@@ -553,8 +885,19 @@ export default function JamRoomScreen() {
               )}
             </View>
 
+            {/* Recording Active Feedback Banner */}
+            {isRecording && (
+              <View style={styles.recordingBanner}>
+                <View style={styles.recordingDot} />
+                <Text style={styles.recordingText}>
+                  Recording voice snippet... Release to send
+                </Text>
+              </View>
+            )}
+
             {/* Chat Input */}
             <View style={styles.chatInputRow}>
+              {isSelfMuted && <Text style={styles.mutedNotice}>The host has muted chat and voice for you.</Text>}
               <TextInput
                 style={styles.chatTextInput}
                 placeholder="Say something to room..."
@@ -563,10 +906,23 @@ export default function JamRoomScreen() {
                 onChangeText={setChatInput}
                 returnKeyType="send"
                 onSubmitEditing={handleSendChat}
+                editable={!isSelfMuted}
               />
               <TouchableOpacity
-                style={[styles.chatSendBtn, !chatInput.trim() && { opacity: 0.5 }]}
-                disabled={!chatInput.trim()}
+                style={[styles.voiceSnippetBtn, isRecording && styles.voiceSnippetBtnActive]}
+                onPressIn={handleStartRecording}
+                onPressOut={handleStopRecording}
+                activeOpacity={0.8}
+              >
+                <Ionicons
+                  name={isRecording ? 'mic' : 'mic-outline'}
+                  size={17}
+                  color={isRecording ? '#000000' : colors.accent}
+                />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.chatSendBtn, (!chatInput.trim() || isSelfMuted) && { opacity: 0.5 }]}
+                disabled={!chatInput.trim() || isSelfMuted}
                 onPress={handleSendChat}
               >
                 <Ionicons name="send" size={16} color={colors.background} />
@@ -597,6 +953,8 @@ export default function JamRoomScreen() {
                       entry.addedBy === currentUsername ||
                       entry.addedBy?.startsWith(currentUsername) ||
                       !entry.addedBy;
+                    const hasUpvoted = entry.upvoters?.includes(currentUsername);
+                    const isMuted = mutedUsers.includes(entry.addedBy);
 
                     return (
                       <View key={`jam-q-${entry.songId}-${index}`} style={styles.queueItem}>
@@ -612,9 +970,38 @@ export default function JamRoomScreen() {
                             {entry.song?.title || 'Loading song...'}
                           </Text>
                           <Text style={styles.queueItemSubtitle} numberOfLines={1}>
-                            {entry.song?.artist || 'JioSaavn'} • Added by {entry.addedBy || 'Jammer'}
+                            {entry.song?.artist || 'JioSaavn'} • by {entry.addedBy || 'Jammer'}
                           </Text>
                         </View>
+
+                        {/* Real-time Upvote Pill */}
+                        <TouchableOpacity
+                          style={[styles.votePill, hasUpvoted && styles.votePillActive]}
+                          onPress={() => {
+                            try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
+                            jamVoteSong(entry.songId);
+                          }}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        >
+                          <Ionicons
+                            name={hasUpvoted ? 'arrow-up-circle' : 'arrow-up-circle-outline'}
+                            size={16}
+                            color={hasUpvoted ? colors.accent : colors.textSecondary}
+                          />
+                          <Text style={[styles.voteCountText, hasUpvoted && styles.voteCountTextActive]}>
+                            {entry.votes || 0}
+                          </Text>
+                        </TouchableOpacity>
+
+                        {isHost && entry.addedBy ? (
+                          <TouchableOpacity
+                            style={styles.queueRemoveBtn}
+                            accessibilityLabel={isMuted ? `Unmute ${entry.addedBy}` : `Mute ${entry.addedBy}`}
+                            onPress={() => djToggleMuteUser(entry.addedBy)}
+                          >
+                            <Ionicons name={isMuted ? 'volume-mute' : 'volume-high-outline'} size={17} color={isMuted ? colors.error : colors.textSecondary} />
+                          </TouchableOpacity>
+                        ) : isMuted ? <Text style={styles.mutedBadge}>Muted</Text> : null}
 
                         {isOwn && (
                           <TouchableOpacity
@@ -643,6 +1030,7 @@ export default function JamRoomScreen() {
                   placeholderTextColor={colors.textSecondary}
                   value={searchQuery}
                   onChangeText={setSearchQuery}
+                  editable={isOnline}
                   returnKeyType="search"
                   onSubmitEditing={handleSearch}
                 />
@@ -708,7 +1096,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
-    paddingBottom: 90,
+    paddingBottom: 160,
   },
 
   // ─── Not in room ───────────────────────────────────────────────────────────
@@ -716,6 +1104,12 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     paddingHorizontal: spacing.xxl,
+  },
+  notInRoomScroll: {
+    paddingHorizontal: spacing.xxl,
+    paddingTop: spacing.xxxl,
+    paddingBottom: 160,
+    justifyContent: 'center',
   },
   hero: {
     alignItems: 'center',
@@ -732,6 +1126,46 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: colors.accentAlpha25,
   },
+  heroIconWrapper: {
+    width: 84,
+    height: 84,
+    borderRadius: 42,
+    backgroundColor: colors.backgroundElevated,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: spacing.lg,
+    borderWidth: 1.5,
+    borderColor: 'rgba(16, 185, 129, 0.4)',
+    position: 'relative',
+  },
+  heroAura: {
+    position: 'absolute',
+    width: 104,
+    height: 104,
+    borderRadius: 52,
+    backgroundColor: colors.accentAlpha10,
+    zIndex: -1,
+  },
+  featuresCard: {
+    marginTop: spacing.xxxl,
+    backgroundColor: colors.backgroundElevated,
+    borderRadius: borderRadius.lg,
+    padding: spacing.lg,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    gap: spacing.md,
+  },
+  featureRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  featureText: {
+    flex: 1,
+    fontSize: typography.sizes.sm,
+    color: colors.textSecondary,
+    lineHeight: 19,
+  },
   heroTitle: {
     fontSize: typography.sizes.xxl,
     fontWeight: typography.weights.bold,
@@ -746,17 +1180,17 @@ const styles = StyleSheet.create({
   },
   createButton: {
     backgroundColor: colors.accent,
-    borderRadius: borderRadius.lg,
-    paddingVertical: spacing.md + 4,
+    borderRadius: borderRadius.full,
+    paddingVertical: spacing.md + 2,
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
     gap: spacing.sm,
   },
   createButtonText: {
-    fontSize: typography.sizes.lg,
-    fontWeight: typography.weights.semibold,
-    color: colors.background,
+    fontSize: typography.sizes.md,
+    fontWeight: '700',
+    color: '#000000',
   },
   divider: {
     flexDirection: 'row',
@@ -782,39 +1216,39 @@ const styles = StyleSheet.create({
   joinInput: {
     flex: 1,
     backgroundColor: colors.backgroundInput,
-    borderRadius: borderRadius.md,
+    borderRadius: borderRadius.full,
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
     fontSize: typography.sizes.lg,
     color: colors.textPrimary,
     borderWidth: 1,
-    borderColor: colors.divider,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
     letterSpacing: 4,
     textAlign: 'center',
     fontWeight: typography.weights.bold,
   },
   joinButton: {
-    backgroundColor: colors.backgroundElevated,
-    borderRadius: borderRadius.md,
+    backgroundColor: colors.accent,
+    borderRadius: borderRadius.full,
     paddingHorizontal: spacing.xxl,
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: colors.accent,
   },
   joinButtonDisabled: {
     opacity: 0.35,
-    borderColor: colors.divider,
+    backgroundColor: colors.backgroundElevated,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
   },
   joinButtonText: {
     fontSize: typography.sizes.md,
-    fontWeight: typography.weights.bold,
-    color: colors.accent,
+    fontWeight: '700',
+    color: '#000000',
   },
 
   // ─── In room ───────────────────────────────────────────────────────────────
   roomCard: {
-    margin: spacing.lg,
+    margin: spacing.xl,
     borderRadius: borderRadius.lg,
   },
   roomCardInner: {
@@ -839,11 +1273,37 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: spacing.sm,
   },
+  roomCodeChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(29, 185, 84, 0.12)',
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: borderRadius.full,
+    borderWidth: 1,
+    borderColor: 'rgba(29, 185, 84, 0.25)',
+  },
   roomCode: {
-    fontSize: 26,
+    fontSize: 18,
     fontWeight: typography.weights.bold,
     color: colors.accent,
-    letterSpacing: 4,
+    letterSpacing: 2,
+  },
+  partyGameBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(29, 185, 84, 0.12)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: borderRadius.full,
+    borderWidth: 1,
+    borderColor: 'rgba(29, 185, 84, 0.25)',
+  },
+  partyGameBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.accent,
   },
   iconActionBtn: {
     padding: 6,
@@ -897,7 +1357,7 @@ const styles = StyleSheet.create({
 
   // ─── Queue Section ─────────────────────────────────────────────────────────
   queueSection: {
-    paddingHorizontal: spacing.lg,
+    paddingHorizontal: spacing.xl,
     marginBottom: spacing.xl,
   },
   queueHeader: {
@@ -918,7 +1378,7 @@ const styles = StyleSheet.create({
     borderRadius: borderRadius.md,
     padding: spacing.md,
     borderWidth: 1,
-    borderColor: colors.divider,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
   },
   emptyQueueText: {
     fontSize: typography.sizes.sm,
@@ -929,7 +1389,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.backgroundElevated,
     borderRadius: borderRadius.md,
     borderWidth: 1,
-    borderColor: colors.divider,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
     overflow: 'hidden',
   },
   queueItem: {
@@ -938,7 +1398,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm + 2,
     paddingHorizontal: spacing.md,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.divider,
+    borderBottomColor: 'rgba(255, 255, 255, 0.04)',
   },
   queueThumb: {
     width: 38,
@@ -975,7 +1435,7 @@ const styles = StyleSheet.create({
 
   // ─── Room Search ───────────────────────────────────────────────────────────
   roomSearch: {
-    paddingHorizontal: spacing.lg,
+    paddingHorizontal: spacing.xl,
     marginBottom: spacing.sm,
   },
   searchSectionTitle: {
@@ -995,7 +1455,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm + 2,
     gap: spacing.sm,
     borderWidth: 1,
-    borderColor: colors.divider,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
   },
   searchInput: {
     flex: 1,
@@ -1053,16 +1513,11 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: '#0E0E1A',
+    backgroundColor: colors.backgroundElevated,
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(0, 242, 254, 0.25)',
-    shadowColor: colors.accent,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 6,
-    elevation: 3,
+    borderColor: colors.accentAlpha25,
   },
   reactionEmoji: {
     fontSize: 20,
@@ -1078,18 +1533,13 @@ const styles = StyleSheet.create({
   floatingReactionBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(10, 10, 20, 0.95)',
+    backgroundColor: 'rgba(24, 24, 24, 0.95)',
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: borderRadius.full,
     borderWidth: 1,
     borderColor: colors.accent,
     gap: 6,
-    shadowColor: colors.accent,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.5,
-    shadowRadius: 8,
-    elevation: 6,
   },
   floatingReactionEmoji: {
     fontSize: 16,
@@ -1103,11 +1553,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     marginHorizontal: spacing.lg,
     marginVertical: spacing.md,
-    backgroundColor: '#0C0C16',
+    backgroundColor: colors.backgroundElevated,
     borderRadius: borderRadius.md,
     padding: 3,
     borderWidth: 1,
-    borderColor: 'rgba(0, 242, 254, 0.15)',
+    borderColor: 'rgba(255, 255, 255, 0.06)',
   },
   segmentBtn: {
     flex: 1,
@@ -1119,9 +1569,9 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   segmentBtnActive: {
-    backgroundColor: '#151426',
+    backgroundColor: colors.accentAlpha15,
     borderWidth: 1,
-    borderColor: 'rgba(0, 242, 254, 0.35)',
+    borderColor: colors.accentAlpha25,
   },
   segmentText: {
     fontSize: typography.sizes.sm,
@@ -1145,7 +1595,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: spacing.xxl,
-    backgroundColor: '#0E0E18',
+    backgroundColor: colors.backgroundElevated,
     borderRadius: borderRadius.md,
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.08)',
@@ -1194,16 +1644,17 @@ const styles = StyleSheet.create({
   chatBubbleMe: {
     backgroundColor: colors.accent,
     borderBottomRightRadius: 2,
-    shadowColor: colors.accent,
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.4,
-    shadowRadius: 4,
   },
   chatBubbleOther: {
-    backgroundColor: '#0E0E18',
+    backgroundColor: colors.backgroundElevated,
     borderBottomLeftRadius: 2,
     borderWidth: 1,
-    borderColor: 'rgba(168, 85, 247, 0.25)',
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  chatBubbleVoiceNote: {
+    borderColor: 'rgba(29, 185, 84, 0.4)',
+    borderWidth: 1,
+    backgroundColor: 'rgba(29, 185, 84, 0.12)',
   },
   chatSender: {
     fontSize: 10,
@@ -1217,16 +1668,16 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   chatMessageTextMe: {
-    color: '#050508',
+    color: '#000000',
     fontWeight: '600',
   },
   chatInputRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#0D0D18',
-    borderRadius: borderRadius.lg,
+    backgroundColor: colors.backgroundElevated,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: 'rgba(0, 242, 254, 0.3)',
+    borderColor: colors.accentAlpha25,
     paddingHorizontal: spacing.md,
     paddingVertical: 4,
     gap: spacing.sm,
@@ -1244,11 +1695,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accent,
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: colors.accent,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.6,
-    shadowRadius: 6,
-    elevation: 3,
   },
   quickInviteSection: {
     marginBottom: spacing.md,
@@ -1295,7 +1741,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xs,
     width: 86,
     borderWidth: 1,
-    borderColor: colors.divider,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
   },
   quickFriendAvatar: {
     width: 32,
@@ -1327,21 +1773,335 @@ const styles = StyleSheet.create({
     gap: 3,
     backgroundColor: colors.accent,
     borderRadius: borderRadius.full,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
     width: '100%',
   },
   quickInviteBtnDone: {
-    backgroundColor: colors.accentAlpha10,
+    backgroundColor: colors.backgroundElevated,
     borderWidth: 1,
-    borderColor: colors.accentAlpha25,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
   },
   quickInviteBtnText: {
     fontSize: 10,
     fontWeight: '700',
-    color: colors.background,
+    color: '#000000',
   },
   quickInviteBtnTextDone: {
+    color: colors.textSecondary,
+  },
+  // Cyber Live DJ Booth HUD
+  djBoothContainer: {
+    marginTop: spacing.md,
+    backgroundColor: colors.backgroundElevated,
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    padding: spacing.sm,
+  },
+  djBoothHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.xs,
+    paddingHorizontal: 2,
+  },
+  djBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: colors.accent,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: borderRadius.full,
+  },
+  djBadgeText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#000000',
+    letterSpacing: 0.5,
+  },
+  djStatusPaused: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: colors.textSecondary,
+    letterSpacing: 0.5,
+  },
+  djBoothBody: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  djArtwork: {
+    width: 44,
+    height: 44,
+    borderRadius: 8,
+    backgroundColor: colors.backgroundElevated,
+  },
+  djArtworkFallback: {
+    width: 44,
+    height: 44,
+    borderRadius: 8,
+    backgroundColor: colors.backgroundElevated,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  djInfo: {
+    flex: 1,
+  },
+  djTitle: {
+    fontSize: typography.sizes.sm,
+    fontWeight: typography.weights.bold,
+    color: colors.textPrimary,
+  },
+  djArtist: {
+    fontSize: typography.sizes.xs,
+    color: colors.textSecondary,
+    marginTop: 1,
+  },
+  djMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 2,
+  },
+  djSyncText: {
+    fontSize: 9,
+    fontWeight: '700',
     color: colors.accent,
+    letterSpacing: 0.3,
+  },
+  djDurationText: {
+    fontSize: 9,
+    fontWeight: '500',
+    color: colors.textSecondary,
+  },
+  djControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  djControlBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
+  },
+  disabledControl: { opacity: 0.4 },
+  mutedNotice: { color: colors.error, fontSize: 12, marginHorizontal: spacing.md },
+  mutedBadge: { color: colors.error, fontSize: 10, fontWeight: '700', marginHorizontal: 6 },
+  djEmptyContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: spacing.sm,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  djEmptyText: {
+    fontSize: typography.sizes.xs,
+    color: colors.textSecondary,
+    fontWeight: '500',
+  },
+  // Upvote Pill Styles
+  votePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: borderRadius.full,
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  votePillActive: {
+    backgroundColor: colors.accentAlpha15,
+    borderColor: colors.accent,
+  },
+  voteCountText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.textSecondary,
+  },
+  voteCountTextActive: {
+    color: colors.accent,
+  },
+  // Synchronized Lyrics HUD
+  syncLyricsBanner: {
+    marginTop: spacing.sm,
+    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+    borderRadius: borderRadius.md,
+    padding: spacing.sm,
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.2)',
+  },
+  syncLyricsHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  syncLyricsTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  syncLyricsTagText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: colors.accent,
+    letterSpacing: 0.5,
+  },
+  broadcastLyricBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: colors.accent,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: borderRadius.full,
+  },
+  broadcastLyricBtnText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#000000',
+  },
+  syncLyricsText: {
+    fontSize: typography.sizes.sm,
+    color: colors.textPrimary,
+    fontStyle: 'italic',
+    textAlign: 'center',
+    lineHeight: 18,
+  },
+  // DJ Overrides Card
+  djOverridesCard: {
+    marginTop: spacing.sm,
+    backgroundColor: colors.backgroundElevated,
+    borderRadius: borderRadius.md,
+    padding: spacing.sm,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  djOverridesHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.xs,
+  },
+  djCrownBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: colors.accentSecondary,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: borderRadius.full,
+  },
+  djCrownText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#000000',
+  },
+  djOverrideSub: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: colors.textSecondary,
+  },
+  djOverrideActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+  },
+  djOverrideBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(239, 68, 68, 0.25)',
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: borderRadius.sm,
+    borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.4)',
+  },
+  djOverrideBtnText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#EF4444',
+  },
+  volumeWeightGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  volWeightChip: {
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: borderRadius.sm,
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  volWeightChipActive: {
+    backgroundColor: colors.accentAlpha25,
+    borderColor: colors.accent,
+  },
+  volWeightText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: colors.textSecondary,
+  },
+  volWeightTextActive: {
+    color: colors.accent,
+  },
+  // Voice Snippet Button
+  voiceSnippetBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.3)',
+  },
+  voiceSnippetBtnActive: {
+    backgroundColor: colors.accent,
+    borderColor: colors.accent,
+  },
+  recordingBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(239, 68, 68, 0.15)',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.35)',
+    marginBottom: spacing.xs,
+  },
+  recordingDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#EF4444',
+  },
+  recordingText: {
+    fontSize: typography.sizes.xs,
+    color: '#EF4444',
+    fontWeight: '700',
+    letterSpacing: 0.3,
   },
 });

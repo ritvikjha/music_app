@@ -1,10 +1,14 @@
-import React, { useRef } from 'react';
-import { View, Text, Image, TouchableOpacity, StyleSheet, Animated as RNAnimated } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { View, Text, Image, TouchableOpacity, StyleSheet, Animated as RNAnimated, Alert, ActivityIndicator } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
-import { colors, spacing, borderRadius, typography } from '../theme';
+import { useRouter } from 'expo-router';
+import { colors, spacing, typography } from '../theme';
 import { AnimatedEqualizer } from './AnimatedEqualizer';
 import type { Song } from '../types';
+import { offlineStorage } from '../services/offlineStorage';
+
+import { SpotifyTouchable } from './SpotifyTouchable';
 
 interface SongCardProps {
   song: Song;
@@ -24,31 +28,51 @@ function formatDuration(seconds: number): string {
 }
 
 /**
- * Horizontal song card with press animation, equalizer indicator, and optional queue action.
+ * Horizontal song card with authentic Spotify tactile spring physics, equalizer indicator, and queue action.
  */
 export function SongCard({ song, onPress, onAddToQueue, onLongPress, isPlaying }: SongCardProps) {
-  const scaleAnim = useRef(new RNAnimated.Value(1)).current;
+  const router = useRouter();
+  const [isStashed, setIsStashed] = useState(false);
+  const [isStashing, setIsStashing] = useState(false);
+  const [stashProgress, setStashProgress] = useState(0);
 
-  const onPressIn = () => {
-    RNAnimated.timing(scaleAnim, {
-      toValue: 0.97,
-      duration: 100,
-      useNativeDriver: true,
-    }).start();
+  useEffect(() => {
+    let active = true;
+    offlineStorage.isStashed(song.id).then((value) => {
+      if (active) setIsStashed(value);
+    });
+    return () => { active = false; };
+  }, [song.id]);
+
+  const handleStashAction = async () => {
+    setIsStashing(true);
+    try {
+      if (isStashed) {
+        await offlineStorage.removeStash(song.id);
+        setIsStashed(false);
+      } else {
+        await offlineStorage.stashTrack(song, (progress) => setStashProgress(progress.fraction));
+        setIsStashed(true);
+      }
+    } catch (error) {
+      Alert.alert('Offline stash', error instanceof Error ? error.message : 'Could not update offline stash.');
+    } finally {
+      setIsStashing(false);
+    }
   };
 
-  const onPressOut = () => {
-    RNAnimated.timing(scaleAnim, {
-      toValue: 1,
-      duration: 150,
-      useNativeDriver: true,
-    }).start();
+  const showSongActions = () => {
+    if (onLongPress) {
+      onLongPress(song);
+      return;
+    }
+    Alert.alert(song.title, 'Keep this track available offline?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: isStashed ? 'Remove offline copy' : 'Stash offline', onPress: handleStashAction },
+    ]);
   };
 
   const handlePress = () => {
-    try {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    } catch {}
     onPress(song);
   };
 
@@ -61,52 +85,64 @@ export function SongCard({ song, onPress, onAddToQueue, onLongPress, isPlaying }
   };
 
   return (
-    <RNAnimated.View style={{ transform: [{ scale: scaleAnim }] }}>
-      <TouchableOpacity
-        style={[styles.container, isPlaying && styles.containerActive]}
-        onPress={handlePress}
-        onLongPress={onLongPress ? () => {
-          try {
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-          } catch {}
-          onLongPress(song);
-        } : undefined}
-        onPressIn={onPressIn}
-        onPressOut={onPressOut}
-        activeOpacity={0.85}
-      >
-        <Image
-          source={{ uri: song.imageUrl }}
-          style={styles.artwork}
-          defaultSource={require('../../assets/images/icon.png')}
-        />
-        <View style={styles.info}>
-          <Text style={[styles.title, isPlaying && styles.titleActive]} numberOfLines={1}>
-            {song.title}
-          </Text>
-          <Text style={styles.artist} numberOfLines={1}>
-            {song.artist}
-          </Text>
-        </View>
-
-        <View style={styles.trailing}>
-          {onAddToQueue && (
-            <TouchableOpacity
-              onPress={handleQueuePress}
-              style={styles.queueButton}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            >
-              <Ionicons name="add-circle-outline" size={22} color={colors.accent} />
+    <SpotifyTouchable
+      style={[styles.container, isPlaying && styles.containerActive]}
+      onPress={handlePress}
+      onLongPress={() => {
+        try {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+        } catch {}
+        showSongActions();
+      }}
+      activeScale={0.96}
+      activeOpacity={0.88}
+    >
+      <Image
+        source={{ uri: song.imageUrl }}
+        style={styles.artwork}
+        defaultSource={require('../../assets/images/icon.png')}
+      />
+      <View style={styles.info}>
+        <Text style={[styles.title, isPlaying && styles.titleActive]} numberOfLines={1}>
+          {song.title}
+        </Text>
+        <View style={styles.metadataRow}>
+          <TouchableOpacity onPress={(event) => { event.stopPropagation(); router.push({ pathname: '/artist/[id]', params: { id: song.artistId || song.artist } }); }}>
+            <Text style={styles.artist} numberOfLines={1}>{song.artist}</Text>
+          </TouchableOpacity>
+          {song.album ? (
+            <TouchableOpacity onPress={(event) => { event.stopPropagation(); router.push({ pathname: '/album/[id]', params: { id: song.albumId || song.album } }); }}>
+              <Text style={styles.album} numberOfLines={1}> · {song.album}</Text>
             </TouchableOpacity>
-          )}
-          {isPlaying ? (
-            <AnimatedEqualizer size={18} color={colors.accent} />
-          ) : (
-            <Text style={styles.duration}>{formatDuration(song.duration)}</Text>
-          )}
+          ) : null}
         </View>
-      </TouchableOpacity>
-    </RNAnimated.View>
+      </View>
+
+      <View style={styles.trailing}>
+        {isStashing ? (
+          <View style={styles.stashIndicator}>
+            <ActivityIndicator size="small" color={colors.accent} />
+            <Text style={styles.stashPercent}>{Math.round(stashProgress * 100)}%</Text>
+          </View>
+        ) : isStashed ? (
+          <Ionicons name="cloud-done" size={16} color={colors.accent} style={styles.stashIndicator} />
+        ) : null}
+        {onAddToQueue && (
+          <TouchableOpacity
+            onPress={handleQueuePress}
+            style={styles.queueButton}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Ionicons name="add-circle-outline" size={22} color={colors.accent} />
+          </TouchableOpacity>
+        )}
+        {isPlaying ? (
+          <AnimatedEqualizer size={18} color={colors.accent} />
+        ) : (
+          <Text style={styles.duration}>{formatDuration(song.duration)}</Text>
+        )}
+      </View>
+    </SpotifyTouchable>
   );
 }
 
@@ -114,44 +150,48 @@ const styles = StyleSheet.create({
   container: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: spacing.md - 1,
-    paddingHorizontal: spacing.lg,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: 'rgba(255, 255, 255, 0.06)',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 8,
   },
   containerActive: {
-    backgroundColor: 'rgba(0, 242, 254, 0.07)',
-    borderLeftWidth: 3,
-    borderLeftColor: colors.accent,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
   },
   artwork: {
     width: 48,
     height: 48,
-    borderRadius: 10,
+    borderRadius: 4,
     backgroundColor: colors.backgroundInput,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
   },
   info: {
     flex: 1,
-    marginLeft: spacing.md,
-    marginRight: spacing.sm,
+    marginLeft: 12,
+    marginRight: 8,
   },
   title: {
-    fontSize: typography.sizes.md,
-    fontWeight: typography.weights.semibold,
+    fontSize: 15,
+    fontWeight: '600',
     color: colors.textPrimary,
-    marginBottom: 2,
-    letterSpacing: 0.2,
+    marginBottom: 3,
   },
   titleActive: {
     color: colors.accent,
-    fontWeight: typography.weights.bold,
+    fontWeight: '700',
   },
   artist: {
-    fontSize: typography.sizes.sm,
+    fontSize: 13,
     color: colors.textSecondary,
     fontWeight: '400',
+  },
+  metadataRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  album: {
+    fontSize: 12,
+    color: colors.textMuted,
+    maxWidth: 120,
   },
   trailing: {
     flexDirection: 'row',
@@ -161,11 +201,19 @@ const styles = StyleSheet.create({
   },
   queueButton: {
     marginRight: 10,
-    padding: 2,
+    padding: 4,
+  },
+  stashIndicator: {
+    alignItems: 'center',
+    marginRight: 8,
+  },
+  stashPercent: {
+    color: colors.accent,
+    fontSize: 9,
   },
   duration: {
-    fontSize: typography.sizes.xs,
+    fontSize: 12,
     color: colors.textSecondary,
-    fontWeight: '500',
+    fontWeight: '400',
   },
 });

@@ -72,6 +72,9 @@ export function AddToPlaylistModal({ visible, onClose, song }: AddToPlaylistModa
         <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={onClose} />
 
         <View style={styles.sheetContainer}>
+          <View style={styles.dragHandleContainer}>
+            <View style={styles.dragHandle} />
+          </View>
           {/* Header */}
           <View style={styles.header}>
             <View style={styles.headerLeft}>
@@ -222,20 +225,29 @@ const styles = StyleSheet.create({
   },
   sheetContainer: {
     maxHeight: '80%',
-    backgroundColor: '#12121A',
-    borderTopLeftRadius: borderRadius.xl,
-    borderTopRightRadius: borderRadius.xl,
-    borderWidth: 1,
-    borderColor: 'rgba(0, 242, 254, 0.18)',
-    paddingTop: spacing.md,
+    backgroundColor: '#282828',
+    borderTopLeftRadius: 12,
+    borderTopRightRadius: 12,
+    borderWidth: 0,
+    paddingTop: 4,
     paddingBottom: 32,
+  },
+  dragHandleContainer: {
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  dragHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: spacing.lg,
-    paddingBottom: spacing.md,
+    paddingBottom: spacing.sm,
     borderBottomWidth: 1,
     borderBottomColor: colors.divider,
   },
@@ -248,7 +260,7 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: colors.accentAlpha25,
+    backgroundColor: colors.accentAlpha10,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -263,19 +275,17 @@ const styles = StyleSheet.create({
   songCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#181724',
+    backgroundColor: '#181818',
     marginHorizontal: spacing.lg,
     marginTop: spacing.md,
     padding: spacing.sm,
-    borderRadius: borderRadius.md,
+    borderRadius: 8,
     gap: spacing.md,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.06)',
   },
   songThumb: {
     width: 44,
     height: 44,
-    borderRadius: borderRadius.sm,
+    borderRadius: 4,
     backgroundColor: colors.backgroundInput,
   },
   songInfo: {
@@ -301,7 +311,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm + 2,
     borderRadius: borderRadius.md,
     borderWidth: 1,
-    borderColor: 'rgba(0, 242, 254, 0.28)',
+    borderColor: colors.borderNeon,
     gap: spacing.sm,
   },
   newPlaylistIconWrap: {

@@ -10,11 +10,10 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
-import { colors, spacing, borderRadius, typography, shadows } from '../theme';
+import { colors, spacing, borderRadius, typography } from '../theme';
 
 /**
- * Login screen — mock auth with username entry.
- * Clean dark card with lavender accents.
+ * Login screen — pure black, bold tagline, green pill button with black text.
  */
 export default function LoginScreen() {
   const { login } = useAuth();
@@ -39,20 +38,20 @@ export default function LoginScreen() {
       <View style={styles.inner}>
         {/* Logo area */}
         <View style={styles.logoContainer}>
-          <View style={[styles.logoCircle, shadows.lavenderGlowIntense]}>
-            <Ionicons name="musical-notes" size={40} color={colors.accent} />
+          <View style={styles.logoCircle}>
+            <Ionicons name="musical-notes" size={44} color={colors.accent} />
           </View>
           <Text style={styles.appName}>Jam</Text>
-          <Text style={styles.tagline}>Listen together, anywhere.</Text>
+          <Text style={styles.tagline}>Millions of songs. Free on Jam.</Text>
         </View>
 
-        {/* Login card */}
+        {/* Login form */}
         <View style={styles.card}>
-          <Text style={styles.label}>Choose your name</Text>
+          <Text style={styles.label}>Choose your username</Text>
           <TextInput
             style={[styles.input, error ? styles.inputError : null]}
-            placeholder="Enter a username..."
-            placeholderTextColor={colors.textSecondary}
+            placeholder="What should we call you?"
+            placeholderTextColor={colors.textMuted}
             value={username}
             onChangeText={(text) => {
               setUsername(text);
@@ -70,10 +69,10 @@ export default function LoginScreen() {
             style={[styles.button, !username.trim() && styles.buttonDisabled]}
             onPress={handleLogin}
             disabled={!username.trim()}
-            activeOpacity={0.8}
+            activeOpacity={0.85}
           >
-            <Text style={styles.buttonText}>Enter Jam</Text>
-            <Ionicons name="arrow-forward" size={18} color={colors.background} />
+            <Text style={styles.buttonText}>Log in</Text>
+            <Ionicons name="arrow-forward" size={18} color="#000000" />
           </TouchableOpacity>
         </View>
       </View>
@@ -84,87 +83,88 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.background,
+    backgroundColor: '#000000',
   },
   inner: {
     flex: 1,
     justifyContent: 'center',
-    paddingHorizontal: spacing.xxl,
+    paddingHorizontal: 24,
   },
   logoContainer: {
     alignItems: 'center',
-    marginBottom: spacing.xxxl + 8,
+    marginBottom: 40,
   },
   logoCircle: {
     width: 80,
     height: 80,
     borderRadius: 40,
-    backgroundColor: colors.backgroundElevated,
+    backgroundColor: '#181818',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: spacing.lg,
+    marginBottom: 20,
   },
   appName: {
-    fontSize: typography.sizes.hero,
-    fontWeight: typography.weights.bold,
-    color: colors.textPrimary,
-    letterSpacing: 1,
+    fontSize: 36,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: -0.5,
   },
   tagline: {
-    fontSize: typography.sizes.md,
-    color: colors.textSecondary,
-    marginTop: spacing.xs,
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    marginTop: 8,
+    textAlign: 'center',
   },
   card: {
-    backgroundColor: colors.backgroundElevated,
-    borderRadius: borderRadius.lg,
-    padding: spacing.xxl,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.divider,
+    backgroundColor: '#181818',
+    borderRadius: 12,
+    padding: 24,
   },
   label: {
-    fontSize: typography.sizes.sm,
-    fontWeight: typography.weights.medium,
+    fontSize: 12,
+    fontWeight: '700',
     color: colors.textSecondary,
-    marginBottom: spacing.sm,
+    marginBottom: 8,
     textTransform: 'uppercase',
-    letterSpacing: 1,
+    letterSpacing: 0.5,
   },
   input: {
-    backgroundColor: colors.backgroundInput,
-    borderRadius: borderRadius.md,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md + 2,
-    fontSize: typography.sizes.lg,
-    color: colors.textPrimary,
-    borderWidth: 1,
-    borderColor: colors.divider,
-    marginBottom: spacing.lg,
+    backgroundColor: '#282828',
+    borderRadius: 24,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    fontSize: 15,
+    color: '#FFFFFF',
+    marginBottom: 16,
   },
   inputError: {
+    borderWidth: 1,
     borderColor: colors.error,
   },
   error: {
-    fontSize: typography.sizes.sm,
+    fontSize: 12,
     color: colors.error,
-    marginBottom: spacing.md,
-    marginTop: -spacing.sm,
+    marginBottom: 12,
+    marginTop: -8,
   },
   button: {
     backgroundColor: colors.accent,
-    borderRadius: borderRadius.md,
-    paddingVertical: spacing.md + 2,
+    borderRadius: 9999,
+    paddingVertical: 14,
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    gap: spacing.sm,
+    gap: 8,
+    marginTop: 4,
   },
   buttonDisabled: {
     opacity: 0.4,
   },
   buttonText: {
-    fontSize: typography.sizes.lg,
-    fontWeight: typography.weights.semibold,
-    color: colors.background,
+    color: '#000000',
+    fontSize: 15,
+    fontWeight: '700',
+    letterSpacing: 0.2,
   },
 });

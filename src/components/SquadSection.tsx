@@ -419,7 +419,7 @@ export function SquadSection() {
         <View style={styles.incomingSection}>
           <View style={styles.incomingSectionHeader}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <Ionicons name="notifications" size={14} color="#00F2FE" />
+              <Ionicons name="notifications" size={14} color={colors.accent} />
               <Text style={styles.incomingSectionTitle}>INCOMING SQUAD REQUESTS</Text>
             </View>
             <View style={styles.incomingBadge}>
@@ -445,7 +445,7 @@ export function SquadSection() {
                   onPress={() => handleAcceptRequest(req)}
                   activeOpacity={0.8}
                 >
-                  <Ionicons name="checkmark" size={14} color="#050508" />
+                  <Ionicons name="checkmark" size={14} color="#000000" />
                   <Text style={styles.incomingAcceptBtnText}>ACCEPT</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
@@ -653,7 +653,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(0, 242, 254, 0.25)',
+    borderColor: colors.borderNeon,
   },
   addSquadBtn: {
     flexDirection: 'row',
@@ -675,8 +675,8 @@ const styles = StyleSheet.create({
   },
   friendCard: {
     width: 120,
-    backgroundColor: '#161522',
-    borderRadius: borderRadius.lg,
+    backgroundColor: colors.backgroundElevated,
+    borderRadius: borderRadius.card,
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.08)',
     padding: spacing.md,
@@ -720,7 +720,7 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     backgroundColor: colors.online,
     borderWidth: 2,
-    borderColor: '#161522',
+    borderColor: colors.backgroundElevated,
   },
   friendName: {
     fontSize: typography.sizes.sm,
@@ -742,7 +742,7 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     borderRadius: borderRadius.full,
     borderWidth: 1,
-    borderColor: 'rgba(0, 242, 254, 0.35)',
+    borderColor: colors.borderNeon,
   },
   inviteBtnText: {
     fontSize: 10,
@@ -750,8 +750,8 @@ const styles = StyleSheet.create({
     color: colors.accent,
   },
   emptyCard: {
-    backgroundColor: '#161522',
-    borderRadius: borderRadius.lg,
+    backgroundColor: colors.backgroundElevated,
+    borderRadius: borderRadius.card,
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.06)',
     padding: spacing.lg,
@@ -792,10 +792,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
   },
   modalSheet: {
-    backgroundColor: '#161522',
+    backgroundColor: colors.backgroundElevated,
     borderRadius: borderRadius.xl,
     borderWidth: 1,
-    borderColor: 'rgba(0, 242, 254, 0.25)',
+    borderColor: colors.borderNeon,
     padding: spacing.lg,
   },
   modalHeader: {
@@ -822,7 +822,7 @@ const styles = StyleSheet.create({
   },
   modalInput: {
     height: 46,
-    backgroundColor: '#1F1E2E',
+    backgroundColor: colors.backgroundInput,
     borderRadius: borderRadius.md,
     borderWidth: 1,
     borderColor: colors.accent,
@@ -860,12 +860,12 @@ const styles = StyleSheet.create({
     color: colors.background,
   },
   incomingSection: {
-    backgroundColor: '#151426',
+    backgroundColor: colors.backgroundElevated,
     borderRadius: 16,
     padding: 12,
     marginBottom: spacing.md,
     borderWidth: 1,
-    borderColor: 'rgba(0, 242, 254, 0.35)',
+    borderColor: colors.borderNeon,
   },
   incomingSectionHeader: {
     flexDirection: 'row',
@@ -876,11 +876,11 @@ const styles = StyleSheet.create({
   incomingSectionTitle: {
     fontSize: 11,
     fontWeight: '900',
-    color: '#00F2FE',
+    color: colors.accent,
     letterSpacing: 0.5,
   },
   incomingBadge: {
-    backgroundColor: 'rgba(0, 242, 254, 0.2)',
+    backgroundColor: colors.accentAlpha25,
     paddingHorizontal: 6,
     paddingVertical: 1,
     borderRadius: 8,
@@ -888,13 +888,13 @@ const styles = StyleSheet.create({
   incomingBadgeText: {
     fontSize: 10,
     fontWeight: '800',
-    color: '#00F2FE',
+    color: colors.accent,
   },
   incomingCard: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#1E1D32',
+    backgroundColor: colors.backgroundElevated,
     borderRadius: 12,
     padding: 10,
     marginVertical: 4,
@@ -911,14 +911,14 @@ const styles = StyleSheet.create({
     width: 34,
     height: 34,
     borderRadius: 17,
-    backgroundColor: 'rgba(0, 242, 254, 0.15)',
+    backgroundColor: colors.accentAlpha10,
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#00F2FE',
+    borderColor: colors.accent,
   },
   incomingAvatarText: {
-    color: '#00F2FE',
+    color: colors.accent,
     fontWeight: '900',
     fontSize: 14,
   },
@@ -940,13 +940,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    backgroundColor: '#00F2FE',
+    backgroundColor: colors.accent,
     paddingVertical: 6,
     paddingHorizontal: 10,
     borderRadius: 10,
   },
   incomingAcceptBtnText: {
-    color: '#050508',
+    color: colors.background,
     fontWeight: '900',
     fontSize: 11,
   },

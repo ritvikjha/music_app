@@ -8,12 +8,12 @@ import {
   Dimensions,
   Share,
   Animated as RNAnimated,
+  PanResponder,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
-import { GestureDetector, Gesture } from 'react-native-gesture-handler';
-import { runOnJS } from 'react-native-reanimated';
+import { SpotifyTouchable } from '../components/SpotifyTouchable';
 import { usePlayer } from '../context/PlayerContext';
 import { useJam } from '../context/JamContext';
 import { useQueue } from '../context/QueueContext';
@@ -26,12 +26,14 @@ import { QueueModal } from '../components/QueueModal';
 import { LyricsModal } from '../components/LyricsModal';
 import { SoundPresetsModal } from '../components/SoundPresetsModal';
 import { AddToPlaylistModal } from '../components/AddToPlaylistModal';
+import { InteractiveArtwork } from '../components/InteractiveArtwork';
+import { OfflineStatusPill } from '../components/OfflineStatusPill';
 import { useKeepAwake } from 'expo-keep-awake';
 import { extractDominantColor, DEFAULT_DOMINANT_COLOR, RGBColor } from '../services/albumColors';
 import { colors, spacing, borderRadius, typography, shadows } from '../theme';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const ART_SIZE = SCREEN_WIDTH - 96;
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+const ART_SIZE = Math.min(SCREEN_WIDTH - 64, SCREEN_HEIGHT > 720 ? 320 : 260);
 
 /**
  * Full-screen player modal with album art, controls, heart, dominant color tint, and Jam info.
@@ -48,10 +50,10 @@ export default function PlayerScreen() {
     skipNext,
     skipPrevious,
   } = usePlayer();
-  const { isInRoom, memberCount, jamPlay, jamPause, jamSeek, jamSkipNext } = useJam();
+  const { isInRoom, isHost, allowGuestPlayback, memberCount, jamPlay, jamPause, jamSeek, jamSkipNext } = useJam();
   const { shuffle, repeatMode, toggleShuffle, cycleRepeatMode, upcomingQueue } = useQueue();
   const { isLiked: checkIsLiked, toggleLike } = useLibrary();
-  const { isActive: sleepTimerActive } = useSleepTimer();
+  const { isActive: sleepTimerActive, remainingMs, timerLabel } = useSleepTimer();
   const router = useRouter();
 
   // Modals state
@@ -61,51 +63,59 @@ export default function PlayerScreen() {
   const [showSoundPresets, setShowSoundPresets] = useState(false);
   const [showAddToPlaylist, setShowAddToPlaylist] = useState(false);
 
-  // Dominant artwork color
+  // Dominant artwork color with guaranteed fallback
   const [artColor, setArtColor] = useState<RGBColor>(DEFAULT_DOMINANT_COLOR);
 
-  // Album art scale animation
-  const scaleAnim = useRef(new RNAnimated.Value(1)).current;
   // Heart bounce
   const heartScale = useRef(new RNAnimated.Value(1)).current;
+  // Play button pulse aura
+  const playPulse = useRef(new RNAnimated.Value(1)).current;
 
-  // Extract color whenever current song changes
+  // Extract color whenever current song changes safely
   useEffect(() => {
+    let isMounted = true;
     if (currentSong?.imageUrl) {
-      extractDominantColor(currentSong.imageUrl).then(setArtColor);
+      extractDominantColor(currentSong.imageUrl)
+        .then((col) => {
+          if (isMounted) setArtColor(col || DEFAULT_DOMINANT_COLOR);
+        })
+        .catch(() => {
+          if (isMounted) setArtColor(DEFAULT_DOMINANT_COLOR);
+        });
     } else {
       setArtColor(DEFAULT_DOMINANT_COLOR);
     }
+    return () => {
+      isMounted = false;
+    };
   }, [currentSong?.imageUrl]);
 
-  // Album art pulse when playing
+  // Pulse play button aura when actively playing
   useEffect(() => {
     if (isPlaying) {
-      RNAnimated.loop(
+      const pulseAnimation = RNAnimated.loop(
         RNAnimated.sequence([
-          RNAnimated.timing(scaleAnim, {
-            toValue: 1.025,
-            duration: 2200,
+          RNAnimated.timing(playPulse, {
+            toValue: 1.2,
+            duration: 1200,
             useNativeDriver: true,
           }),
-          RNAnimated.timing(scaleAnim, {
+          RNAnimated.timing(playPulse, {
             toValue: 1,
-            duration: 2200,
+            duration: 1200,
             useNativeDriver: true,
           }),
         ])
-      ).start();
+      );
+      pulseAnimation.start();
+      return () => pulseAnimation.stop();
     } else {
-      scaleAnim.stopAnimation();
-      RNAnimated.timing(scaleAnim, {
-        toValue: 1,
-        duration: 300,
-        useNativeDriver: true,
-      }).start();
+      playPulse.setValue(1);
     }
-  }, [isPlaying, scaleAnim]);
+  }, [isPlaying, playPulse]);
 
   const isLiked = currentSong ? checkIsLiked(currentSong.id) : false;
+  const canControlPlayback = !isInRoom || isHost || allowGuestPlayback;
 
   const handleToggleLike = async () => {
     if (!currentSong) return;
@@ -122,6 +132,7 @@ export default function PlayerScreen() {
   };
 
   const handlePlayPause = () => {
+    if (!canControlPlayback) return;
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     } catch {}
@@ -134,6 +145,7 @@ export default function PlayerScreen() {
   };
 
   const handleSeek = (ms: number) => {
+    if (!canControlPlayback) return;
     if (isInRoom) {
       jamSeek(ms);
     } else {
@@ -142,6 +154,7 @@ export default function PlayerScreen() {
   };
 
   const handleSkipNext = () => {
+    if (!canControlPlayback) return;
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     } catch {}
@@ -153,6 +166,7 @@ export default function PlayerScreen() {
   };
 
   const handleSkipPrevious = () => {
+    if (!canControlPlayback) return;
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     } catch {}
@@ -177,16 +191,11 @@ export default function PlayerScreen() {
   };
 
   const dismissModal = () => {
+    try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } catch {}
     router.back();
   };
-
-  const dismissGesture = Gesture.Pan()
-    .activeOffsetY([10, 40])
-    .onEnd((e) => {
-      if (e.translationY > 40) {
-        runOnJS(dismissModal)();
-      }
-    });
 
   if (!currentSong) {
     return (
@@ -197,42 +206,95 @@ export default function PlayerScreen() {
           </TouchableOpacity>
         </View>
         <View style={styles.emptyContainer}>
-          <Ionicons name="musical-note-outline" size={64} color={colors.textSecondary} style={{ opacity: 0.4 }} />
-          <Text style={styles.emptyText}>No song playing</Text>
+          <View style={styles.emptyIconRing}>
+            <Ionicons name="disc" size={54} color={colors.accent} />
+          </View>
+          <Text style={styles.emptyTitle}>NO TRACK LOADED</Text>
+          <Text style={styles.emptyText}>Pick a track from Trending Hits or explore your Liked Songs library.</Text>
+          <TouchableOpacity
+            style={styles.emptyCta}
+            onPress={() => {
+              try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
+              router.push('/(tabs)/home');
+            }}
+            activeOpacity={0.82}
+          >
+            <Ionicons name="flash" size={16} color="#000000" />
+            <Text style={styles.emptyCtaText}>DISCOVER MUSIC</Text>
+          </TouchableOpacity>
         </View>
       </View>
     );
   }
 
-  const dynamicGlowColor = `rgb(${artColor.r}, ${artColor.g}, ${artColor.b})`;
-  const dynamicTint = `rgba(${artColor.r}, ${artColor.g}, ${artColor.b}, 0.12)`;
-  const dynamicBlob = `rgba(${artColor.r}, ${artColor.g}, ${artColor.b}, 0.28)`;
+  const safeArtColor =
+    artColor && typeof artColor.r === 'number' && typeof artColor.g === 'number' && typeof artColor.b === 'number'
+      ? artColor
+      : DEFAULT_DOMINANT_COLOR;
+  const dynamicGlowColor = `rgb(${safeArtColor.r}, ${safeArtColor.g}, ${safeArtColor.b})`;
 
   return (
     <View style={styles.container}>
-      {/* Background tint overlay */}
-      <View style={[StyleSheet.absoluteFill, { backgroundColor: dynamicTint }]} />
-      {/* Ambient background glow circle */}
-      <View
-        style={[
-          styles.glowBlob,
-          {
-            backgroundColor: dynamicBlob,
-            shadowColor: dynamicGlowColor,
-          },
-        ]}
-      />
+      {/* JS-only layered ambient backdrop fading to Spotify dark surface (#121212) */}
+      <View style={StyleSheet.absoluteFill} pointerEvents="none">
+        <View
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            height: '55%',
+            backgroundColor: `rgb(${safeArtColor.r}, ${safeArtColor.g}, ${safeArtColor.b})`,
+            opacity: 0.28,
+          }}
+        />
+        <View
+          style={{
+            position: 'absolute',
+            top: '25%',
+            left: 0,
+            right: 0,
+            height: '35%',
+            backgroundColor: '#121212',
+            opacity: 0.55,
+          }}
+        />
+        <View
+          style={{
+            position: 'absolute',
+            top: '45%',
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: '#121212',
+            opacity: 0.88,
+          }}
+        />
+        <View
+          style={{
+            position: 'absolute',
+            top: '60%',
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: '#121212',
+          }}
+        />
+      </View>
 
-      {/* Top Handle with pull-down gesture to dismiss */}
-      <GestureDetector gesture={dismissGesture}>
-        <View style={styles.handleContainer}>
-          <View style={styles.handleBar} />
-        </View>
-      </GestureDetector>
+      {/* Top Handle with tap to dismiss */}
+      <TouchableOpacity
+        onPress={dismissModal}
+        style={styles.handleContainer}
+        hitSlop={{ top: 10, bottom: 10, left: 20, right: 20 }}
+        activeOpacity={0.7}
+      >
+        <View style={styles.handleBar} />
+      </TouchableOpacity>
 
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+        <TouchableOpacity onPress={dismissModal} style={styles.backButton}>
           <Ionicons name="chevron-down" size={28} color={colors.textPrimary} />
         </TouchableOpacity>
         <View style={styles.headerCenter}>
@@ -269,96 +331,175 @@ export default function PlayerScreen() {
         </View>
       </View>
 
-      {/* Album art with pulse animation and dynamic glow */}
-      <View style={styles.artContainer}>
-        <RNAnimated.View
-          style={[
-            styles.artShadow,
-            {
-              shadowColor: dynamicGlowColor,
-              shadowOffset: { width: 0, height: 16 },
-              shadowOpacity: 0.55,
-              shadowRadius: 28,
-              elevation: 16,
-              transform: [{ scale: scaleAnim }],
-            },
-          ]}
-        >
-          <Image
-            source={{ uri: currentSong.imageUrl }}
-            style={styles.artwork}
-          />
-        </RNAnimated.View>
+      {/* Offline Stash Resilience Indicator */}
+      <OfflineStatusPill />
+
+      {/* Interactive Album Artwork with Vinyl Slide-Out, Pulse on Play/Pause & Swipe to Skip */}
+      <View style={styles.artworkContainer}>
+        <InteractiveArtwork
+          imageUrl={currentSong.imageUrl}
+          songTitle={currentSong.title}
+          artist={currentSong.artist}
+          isPlaying={isPlaying}
+          artColor={artColor}
+          size={ART_SIZE}
+          onSkipNext={isInRoom ? jamSkipNext : () => skipNext()}
+          onSkipPrevious={skipPrevious}
+          onCollapse={dismissModal}
+        />
       </View>
 
       {/* Song info + Like button */}
       <View style={styles.infoRow}>
         <View style={styles.infoContainer}>
-          <Text style={styles.songTitle} numberOfLines={2}>
+          <Text style={styles.songTitle} numberOfLines={1}>
             {currentSong.title}
           </Text>
-          <Text style={styles.songArtist} numberOfLines={1}>
-            {currentSong.artist}
-          </Text>
+          <View style={styles.songMetaLinks}>
+            <TouchableOpacity
+              onPress={() => router.push({ pathname: '/artist/[id]', params: { id: currentSong.artistId || currentSong.artist } })}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.songArtist} numberOfLines={1}>{currentSong.artist}</Text>
+            </TouchableOpacity>
+            {currentSong.album ? (
+              <>
+                <Text style={styles.songMetaDot}>·</Text>
+                <TouchableOpacity
+                  onPress={() => router.push({ pathname: '/album/[id]', params: { id: currentSong.albumId || currentSong.album } })}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.songArtist} numberOfLines={1}>{currentSong.album}</Text>
+                </TouchableOpacity>
+              </>
+            ) : null}
+          </View>
+          <View style={styles.metaBadgeRow}>
+            <TouchableOpacity
+              onPress={() => {
+                try {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                } catch {}
+                setShowSoundPresets(true);
+              }}
+              activeOpacity={0.75}
+              style={styles.audioBadge}
+            >
+              <Ionicons name="sparkles" size={10} color={colors.accent} style={{ marginRight: 3 }} />
+              <Text style={styles.audioBadgeText}>320 KBPS HD</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => {
+                try {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                } catch {}
+                setShowSoundPresets(true);
+              }}
+              activeOpacity={0.75}
+              style={styles.audioBadge}
+            >
+              <Text style={styles.audioBadgeText}>EQUALIZER</Text>
+            </TouchableOpacity>
+            {sleepTimerActive && (
+              <TouchableOpacity
+                onPress={() => {
+                  try {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  } catch {}
+                  setShowSleepTimer(true);
+                }}
+                activeOpacity={0.75}
+                style={[styles.audioBadge, { borderColor: colors.accentAlpha25, backgroundColor: colors.accentAlpha10 }]}
+              >
+                <Ionicons name="moon" size={10} color={colors.accent} style={{ marginRight: 3 }} />
+                <Text style={[styles.audioBadgeText, { color: colors.accent }]}>
+                  {timerLabel || `${Math.ceil(remainingMs / 60000)}m`}
+                </Text>
+              </TouchableOpacity>
+            )}
+            {isInRoom && (
+              <View style={[styles.audioBadge, styles.liveSyncBadge]}>
+                <View style={styles.liveDot} />
+                <Text style={styles.liveSyncText}>LIVE JAM</Text>
+              </View>
+            )}
+          </View>
         </View>
         <RNAnimated.View style={{ transform: [{ scale: heartScale }] }}>
-          <TouchableOpacity onPress={handleToggleLike} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+          <TouchableOpacity
+            style={styles.heartButton}
+            onPress={handleToggleLike}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          >
             <Ionicons
               name={isLiked ? 'heart' : 'heart-outline'}
-              size={28}
-              color={isLiked ? '#F87171' : colors.textSecondary}
+              size={26}
+              color={isLiked ? '#FF4D6D' : colors.textSecondary}
             />
           </TouchableOpacity>
         </RNAnimated.View>
       </View>
 
-      {/* Progress bar */}
+      {/* Progress bar with dynamic scrub bubble & glow */}
       <ProgressBar
         positionMs={positionMs}
         durationMs={durationMs}
         onSeek={handleSeek}
+        accentColor={dynamicGlowColor}
       />
 
-      {/* Controls */}
-      <View style={styles.controls}>
+      {/* Floating Futuristic Playback Capsule */}
+      <View style={styles.controlCapsule}>
         {/* Shuffle */}
         <TouchableOpacity
           style={styles.secondaryButton}
           onPress={toggleShuffle}
           disabled={isInRoom}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
           <Ionicons
             name="shuffle"
-            size={22}
+            size={20}
             color={shuffle && !isInRoom ? colors.accent : colors.textSecondary}
           />
         </TouchableOpacity>
 
         {/* Previous */}
-        <TouchableOpacity style={styles.controlButton} onPress={handleSkipPrevious}>
-          <Ionicons name="play-skip-back" size={28} color={colors.textPrimary} />
+        <TouchableOpacity
+          style={styles.controlButton}
+          onPress={handleSkipPrevious}
+          disabled={!canControlPlayback}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <Ionicons name="play-skip-back" size={26} color={colors.textPrimary} />
         </TouchableOpacity>
 
-        {/* Play / Pause */}
-        <TouchableOpacity
-          style={[styles.playButton, shadows.lavenderGlow]}
-          onPress={handlePlayPause}
-          activeOpacity={0.8}
-        >
-          <Ionicons
-            name={isPlaying ? 'pause' : 'play'}
-            size={32}
-            color={colors.background}
-            style={!isPlaying ? { marginLeft: 3 } : undefined}
-          />
-        </TouchableOpacity>
+        {/* Play / Pause - Large white circle with black icon */}
+        <View style={styles.playButtonWrapper}>
+          <SpotifyTouchable
+            style={styles.playButton}
+            onPress={handlePlayPause}
+            disabled={!canControlPlayback}
+            activeScale={0.93}
+            activeOpacity={0.88}
+          >
+            <Ionicons
+              name={isPlaying ? 'pause' : 'play'}
+              size={32}
+              color="#000000"
+              style={!isPlaying ? { marginLeft: 3 } : undefined}
+            />
+          </SpotifyTouchable>
+        </View>
 
         {/* Next */}
         <TouchableOpacity
           style={styles.controlButton}
           onPress={handleSkipNext}
+          disabled={!canControlPlayback}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
-          <Ionicons name="play-skip-forward" size={28} color={colors.textPrimary} />
+          <Ionicons name="play-skip-forward" size={26} color={colors.textPrimary} />
         </TouchableOpacity>
 
         {/* Repeat */}
@@ -366,11 +507,12 @@ export default function PlayerScreen() {
           style={styles.secondaryButton}
           onPress={cycleRepeatMode}
           disabled={isInRoom}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
           <View style={styles.repeatButtonContainer}>
             <Ionicons
               name="repeat"
-              size={22}
+              size={20}
               color={repeatMode !== 'off' && !isInRoom ? colors.accent : colors.textSecondary}
             />
             {repeatMode === 'one' && !isInRoom && (
@@ -382,41 +524,50 @@ export default function PlayerScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Action Row: Lyrics, Share, Queue */}
+      {/* Action Row: Lyrics, Share, Playlist, Queue */}
       <View style={styles.actionRow}>
         <TouchableOpacity
           style={styles.actionPill}
-          onPress={() => setShowLyrics(true)}
-          activeOpacity={0.7}
+          onPress={() => {
+            try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
+            setShowLyrics(true);
+          }}
+          activeOpacity={0.75}
         >
-          <Ionicons name="mic-outline" size={17} color={colors.accent} />
+          <Ionicons name="mic-outline" size={16} color={colors.textSecondary} />
           <Text style={styles.actionPillText}>Lyrics</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
           style={styles.actionPill}
           onPress={handleShare}
-          activeOpacity={0.7}
+          activeOpacity={0.75}
         >
-          <Ionicons name="share-social-outline" size={17} color={colors.textPrimary} />
+          <Ionicons name="share-social-outline" size={16} color={colors.textSecondary} />
           <Text style={styles.actionPillText}>Share</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
           style={styles.actionPill}
-          onPress={() => setShowAddToPlaylist(true)}
-          activeOpacity={0.7}
+          onPress={() => {
+            try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
+            setShowAddToPlaylist(true);
+          }}
+          activeOpacity={0.75}
         >
-          <Ionicons name="bookmark-outline" size={17} color={colors.accentSecondary} />
+          <Ionicons name="bookmark-outline" size={16} color={colors.textSecondary} />
           <Text style={styles.actionPillText}>Playlist</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
           style={styles.actionPill}
-          onPress={() => setShowQueue(true)}
-          activeOpacity={0.7}
+          onPress={() => {
+            try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
+            setShowQueue(true);
+          }}
+          activeOpacity={0.75}
         >
-          <Ionicons name="list-outline" size={17} color={colors.accent} />
+          <Ionicons name="list-outline" size={16} color={colors.textSecondary} />
           <Text style={styles.actionPillText}>Queue</Text>
           {upcomingQueue.length > 0 && (
             <View style={styles.actionBadge}>
@@ -449,12 +600,13 @@ export default function PlayerScreen() {
         onClose={() => setShowQueue(false)}
       />
 
-      {/* Lyrics Modal */}
+      {/* Lyrics Modal with Tap-To-Seek */}
       <LyricsModal
         visible={showLyrics}
         onClose={() => setShowLyrics(false)}
         song={currentSong}
         positionMs={positionMs}
+        onSeek={handleSeek}
       />
 
       {/* Audio Sound Presets & Equalizer Modal */}
@@ -477,6 +629,10 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
+  },
+  artworkContainer: {
+    alignSelf: 'center',
+    marginVertical: spacing.xs,
   },
   glowBlob: {
     position: 'absolute',
@@ -525,9 +681,8 @@ const styles = StyleSheet.create({
     width: 38,
     height: 38,
     borderRadius: 19,
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+    backgroundColor: 'transparent',
+    borderWidth: 0,
     justifyContent: 'center',
     alignItems: 'center',
     position: 'relative',
@@ -562,54 +717,102 @@ const styles = StyleSheet.create({
     fontWeight: typography.weights.medium,
     color: colors.accent,
   },
-  artContainer: {
-    alignItems: 'center',
-    marginTop: spacing.md,
-    marginBottom: spacing.xl,
-  },
-  artShadow: {
-    borderRadius: 22,
-    backgroundColor: colors.backgroundInput,
-    borderWidth: 1,
-    borderColor: 'rgba(0, 242, 254, 0.25)',
-  },
-  artwork: {
-    width: ART_SIZE,
-    height: ART_SIZE,
-    borderRadius: 20,
-  },
   infoRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: spacing.xxl,
-    marginBottom: spacing.xl,
+    paddingHorizontal: spacing.xl,
+    marginTop: spacing.xs,
+    marginBottom: spacing.md,
   },
   infoContainer: {
     flex: 1,
     marginRight: spacing.md,
   },
   songTitle: {
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: typography.weights.bold,
     color: colors.textPrimary,
-    marginBottom: spacing.xs,
-    letterSpacing: 0.3,
+    letterSpacing: 0.2,
   },
   songArtist: {
-    fontSize: typography.sizes.md,
+    fontSize: typography.sizes.sm,
     color: colors.textSecondary,
     fontWeight: '500',
+    marginTop: 2,
   },
-  controls: {
+  songMetaLinks: {
     flexDirection: 'row',
-    justifyContent: 'center',
     alignItems: 'center',
-    marginTop: spacing.xl,
-    gap: spacing.xl,
+    gap: 6,
+    marginTop: 2,
+  },
+  songMetaDot: {
+    color: colors.textMuted,
+    fontSize: typography.sizes.sm,
+  },
+  metaBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 6,
+  },
+  audioBadge: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 4,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.09)',
+  },
+  audioBadgeText: {
+    fontSize: 9,
+    fontWeight: typography.weights.bold,
+    color: colors.textSecondary,
+    letterSpacing: 0.5,
+  },
+  liveSyncBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: colors.accentAlpha10,
+    borderColor: colors.accentAlpha25,
+  },
+  liveDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+    backgroundColor: colors.accent,
+  },
+  liveSyncText: {
+    fontSize: 9,
+    fontWeight: typography.weights.extrabold,
+    color: colors.accent,
+    letterSpacing: 0.5,
+  },
+  heartButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'transparent',
+    borderWidth: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  controlCapsule: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: spacing.md,
+    marginHorizontal: spacing.lg,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm + 4,
+    backgroundColor: 'transparent',
+    borderRadius: borderRadius.xl,
+    borderWidth: 0,
   },
   secondaryButton: {
-    width: 40,
-    height: 40,
+    width: 38,
+    height: 38,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -635,28 +838,70 @@ const styles = StyleSheet.create({
     color: colors.background,
   },
   controlButton: {
-    width: 48,
-    height: 48,
+    width: 44,
+    height: 44,
     justifyContent: 'center',
     alignItems: 'center',
   },
+  playButtonWrapper: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 68,
+    height: 68,
+  },
   playButton: {
-    width: 70,
-    height: 70,
-    borderRadius: 35,
-    backgroundColor: colors.accent,
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: '#FFFFFF',
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: colors.accent,
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.65,
-    shadowRadius: 18,
-    elevation: 10,
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  actionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+    paddingHorizontal: spacing.lg,
+  },
+  actionPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#282828',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs + 3,
+    borderRadius: borderRadius.full,
+    borderWidth: 0,
+    gap: 6,
+  },
+  actionPillText: {
+    fontSize: typography.sizes.xs,
+    fontWeight: typography.weights.bold,
+    color: colors.textPrimary,
+    letterSpacing: 0.2,
+  },
+  actionBadge: {
+    backgroundColor: colors.accent,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: borderRadius.full,
+    marginLeft: 2,
+  },
+  actionBadgeText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#000000',
   },
   jamInfo: {
     alignItems: 'center',
-    marginTop: spacing.xxxl,
-    gap: spacing.md,
+    marginTop: spacing.md,
+    gap: spacing.xs,
   },
   jamBadge: {
     flexDirection: 'row',
@@ -664,7 +909,7 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
   },
   jamBadgeText: {
-    fontSize: typography.sizes.sm,
+    fontSize: typography.sizes.xs,
     color: colors.accent,
     fontWeight: typography.weights.medium,
   },
@@ -672,11 +917,47 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    paddingHorizontal: spacing.xxl,
+  },
+  emptyIconRing: {
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    backgroundColor: colors.accentAlpha10,
+    borderWidth: 1.5,
+    borderColor: colors.accentAlpha25,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: spacing.lg,
+  },
+  emptyTitle: {
+    fontSize: typography.sizes.md,
+    fontWeight: typography.weights.bold,
+    color: colors.textPrimary,
+    letterSpacing: 0.8,
   },
   emptyText: {
-    fontSize: typography.sizes.lg,
+    fontSize: typography.sizes.sm,
     color: colors.textSecondary,
-    marginTop: spacing.lg,
+    textAlign: 'center',
+    marginTop: spacing.xs,
+    marginBottom: spacing.xl,
+    lineHeight: 20,
+  },
+  emptyCta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: colors.accent,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.md,
+    borderRadius: borderRadius.full,
+  },
+  emptyCtaText: {
+    fontSize: typography.sizes.xs,
+    fontWeight: typography.weights.extrabold,
+    color: '#000000',
+    letterSpacing: 0.6,
   },
   sleepTimerButton: {
     width: 44,
@@ -684,46 +965,5 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     position: 'relative',
-  },
-  actionRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.md,
-    marginTop: spacing.xl,
-    paddingHorizontal: spacing.lg,
-  },
-  actionPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0, 242, 254, 0.08)',
-    paddingHorizontal: spacing.md + 2,
-    paddingVertical: spacing.xs + 3,
-    borderRadius: borderRadius.full,
-    borderWidth: 1,
-    borderColor: 'rgba(0, 242, 254, 0.22)',
-    gap: 6,
-  },
-  actionPillText: {
-    fontSize: typography.sizes.xs,
-    fontWeight: typography.weights.bold,
-    color: colors.textPrimary,
-    letterSpacing: 0.3,
-  },
-  actionBadge: {
-    backgroundColor: colors.accent,
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    borderRadius: borderRadius.full,
-    shadowColor: colors.accent,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.6,
-    shadowRadius: 4,
-    marginLeft: 2,
-  },
-  actionBadgeText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: colors.background,
   },
 });

@@ -1,6 +1,5 @@
 import React from 'react';
-import { View, Text, Image, TouchableOpacity, StyleSheet, Platform } from 'react-native';
-import { BlurView } from 'expo-blur';
+import { View, Text, Image, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
@@ -9,48 +8,68 @@ import { runOnJS } from 'react-native-reanimated';
 import { usePlayer } from '../context/PlayerContext';
 import { useJam } from '../context/JamContext';
 import { AnimatedEqualizer } from './AnimatedEqualizer';
+import { SpotifyTouchable } from './SpotifyTouchable';
+import { extractDominantColor, DEFAULT_DOMINANT_COLOR } from '../services/albumColors';
 import { colors, spacing, borderRadius, typography } from '../theme';
 
 /**
  * Persistent mini-player bar shown at the bottom of tab screens.
- * Features glassmorphism blur, progress line, skip-next button,
- * swipe-up gesture to expand, and equalizer indicator.
+ * Features Spotify floating rounded bar (8px) tinted with dominant album color,
+ * thin white progress line, swipe-up gesture, and tactile controls.
  */
 export function MiniPlayer() {
-  const { currentSong, isPlaying, togglePlayPause, skipNext, positionMs, durationMs } = usePlayer();
-  const { isInRoom, jamPlay, jamPause, jamSkipNext } = useJam();
+  const { currentSong, isPlaying, togglePlayPause, skipNext, skipPrevious, positionMs, durationMs } = usePlayer();
+  const { isInRoom, isHost, allowGuestPlayback, jamPlay, jamPause, jamSkipNext, jamSeek } = useJam();
+  const canControlPlayback = !isInRoom || isHost || allowGuestPlayback;
   const router = useRouter();
+
+  const [tintColor, setTintColor] = React.useState<string>('#282828');
+
+  React.useEffect(() => {
+    let active = true;
+    if (currentSong?.imageUrl) {
+      extractDominantColor(currentSong.imageUrl).then((c) => {
+        if (active) {
+          // Subtle blend of dominant color with Spotify dark surface
+          setTintColor(`rgba(${c.r}, ${c.g}, ${c.b}, 0.24)`);
+        }
+      }).catch(() => {
+        if (active) setTintColor('transparent');
+      });
+    } else {
+      setTintColor('transparent');
+    }
+    return () => { active = false; };
+  }, [currentSong?.imageUrl]);
 
   if (!currentSong) return null;
 
-  const progress = durationMs > 0 ? positionMs / durationMs : 0;
+  const safePosition =
+    typeof positionMs === 'number' && isFinite(positionMs) && !isNaN(positionMs)
+      ? Math.max(0, positionMs)
+      : 0;
+  const safeDuration =
+    typeof durationMs === 'number' && isFinite(durationMs) && !isNaN(durationMs)
+      ? Math.max(0, durationMs)
+      : 0;
+  const safeProgress =
+    safeDuration > 0 ? Math.min(1, Math.max(0, safePosition / safeDuration)) : 0;
+  const progressPercent =
+    typeof safeProgress === 'number' && isFinite(safeProgress) && !isNaN(safeProgress)
+      ? safeProgress * 100
+      : 0;
 
   const navigateToPlayer = () => {
-    router.push('/player');
-  };
-
-  const panGesture = Gesture.Pan()
-    .activeOffsetY([-15, 15])
-    .onEnd((e) => {
-      if (e.translationY < -20) {
-        runOnJS(navigateToPlayer)();
-      }
-    });
-
-  const handleToggle = () => {
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     } catch {}
-    if (isInRoom) {
-      isPlaying ? jamPause() : jamPlay();
-    } else {
-      togglePlayPause();
-    }
+    router.push('/player');
   };
 
   const handleSkipNext = () => {
+    if (!canControlPlayback) return;
     try {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     } catch {}
     if (isInRoom) {
       jamSkipNext();
@@ -59,18 +78,57 @@ export function MiniPlayer() {
     }
   };
 
-  const innerContent = (
-    <>
-      {/* Progress line at the top */}
-      <View style={styles.progressTrack}>
-        <View style={[styles.progressFill, { width: `${progress * 100}%` }]} />
-      </View>
+  const handleSkipPrevious = () => {
+    if (!canControlPlayback) return;
+    try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    } catch {}
+    if (isInRoom) {
+      jamSeek(0);
+    } else {
+      skipPrevious();
+    }
+  };
 
+  const panGesture = Gesture.Pan()
+    .activeOffsetY([-10, 10])
+    .activeOffsetX([-15, 15])
+    .onEnd((e) => {
+      // Swiping upward expands to player
+      if (e.translationY < -15 || e.velocityY < -250) {
+        runOnJS(navigateToPlayer)();
+      } else if (e.translationX < -40 || e.velocityX < -400) {
+        // Swipe left -> Next track
+        runOnJS(handleSkipNext)();
+      } else if (e.translationX > 40 || e.velocityX > 400) {
+        // Swipe right -> Previous track
+        runOnJS(handleSkipPrevious)();
+      }
+    });
+
+  const handleToggle = () => {
+    if (!canControlPlayback) return;
+    if (isInRoom) {
+      isPlaying ? jamPause() : jamPlay();
+    } else {
+      togglePlayPause();
+    }
+  };
+
+  const innerContent = (
+    <View style={styles.surface}>
+      <View style={[StyleSheet.absoluteFill, { backgroundColor: tintColor }]} pointerEvents="none" />
       <View style={styles.content}>
-        <Image
-          source={{ uri: currentSong.imageUrl }}
-          style={styles.artwork}
-        />
+        {currentSong.imageUrl ? (
+          <Image
+            source={{ uri: currentSong.imageUrl }}
+            style={styles.artwork}
+          />
+        ) : (
+          <View style={[styles.artwork, { justifyContent: 'center', alignItems: 'center' }]}>
+            <Ionicons name="musical-notes" size={18} color="#777777" />
+          </View>
+        )}
         <View style={styles.info}>
           <Text style={styles.title} numberOfLines={1}>
             {currentSong.title}
@@ -87,148 +145,122 @@ export function MiniPlayer() {
           </View>
         ) : isPlaying ? (
           <View style={styles.eqContainer}>
-            <AnimatedEqualizer size={14} color={colors.accent} />
+            <AnimatedEqualizer size={14} color={colors.accent} isPlaying={isPlaying} />
           </View>
         ) : null}
 
         {/* Play / Pause button */}
-        <TouchableOpacity
+        <SpotifyTouchable
           onPress={(e) => {
             e.stopPropagation();
             handleToggle();
           }}
           style={styles.playButton}
+          disabled={!canControlPlayback}
+          activeScale={0.88}
+          activeOpacity={0.85}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
           <Ionicons
             name={isPlaying ? 'pause' : 'play'}
-            size={20}
+            size={22}
             color={colors.textPrimary}
           />
-        </TouchableOpacity>
+        </SpotifyTouchable>
 
         {/* Next Track button */}
-        <TouchableOpacity
+        <SpotifyTouchable
           onPress={(e) => {
             e.stopPropagation();
             handleSkipNext();
           }}
           style={styles.nextButton}
+          disabled={!canControlPlayback}
+          activeScale={0.88}
+          activeOpacity={0.85}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
           <Ionicons
             name="play-skip-forward"
-            size={18}
+            size={20}
             color={colors.textSecondary}
           />
-        </TouchableOpacity>
-
-        {/* Expand hint */}
-        <Ionicons
-          name="chevron-up"
-          size={16}
-          color={colors.textSecondary}
-          style={styles.expandHint}
-        />
+        </SpotifyTouchable>
       </View>
-    </>
+
+      {/* Spotify thin white progress line along the bottom */}
+      <View style={styles.progressTrack}>
+        <View style={[styles.progressFill, { width: `${progressPercent}%` }]} />
+      </View>
+    </View>
   );
 
   return (
     <GestureDetector gesture={panGesture}>
-      <TouchableOpacity
+      <SpotifyTouchable
         style={styles.container}
         onPress={navigateToPlayer}
-        activeOpacity={0.94}
+        activeScale={0.98}
+        activeOpacity={0.92}
       >
-        {Platform.OS === 'ios' ? (
-          <BlurView
-            intensity={80}
-            tint="dark"
-            style={styles.blurContainer}
-          >
-            <View style={styles.glassOverlay}>
-              {innerContent}
-            </View>
-          </BlurView>
-        ) : (
-          /* Android: expo-blur renders as semi-transparent, so we use a
-             manually crafted translucent background for the glass effect */
-          <View style={styles.androidGlass}>
-            {innerContent}
-          </View>
-        )}
-      </TouchableOpacity>
+        {innerContent}
+      </SpotifyTouchable>
     </GestureDetector>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    marginHorizontal: 10,
+    marginHorizontal: 8,
     marginBottom: 6,
-    borderRadius: borderRadius.lg,
+    borderRadius: 8,
     overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(0, 242, 254, 0.3)',
-    shadowColor: '#00F2FE',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 16,
-    elevation: 12,
   },
-  blurContainer: {
-    // iOS: full blur effect
-  },
-  glassOverlay: {
-    backgroundColor: 'rgba(10, 10, 18, 0.75)',
-  },
-  androidGlass: {
-    backgroundColor: 'rgba(12, 12, 22, 0.96)',
+  surface: {
+    backgroundColor: '#282828',
+    borderRadius: 8,
+    position: 'relative',
+    overflow: 'hidden',
   },
   progressTrack: {
-    height: 2.5,
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 2,
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
   },
   progressFill: {
     height: '100%',
-    backgroundColor: colors.accent,
-    shadowColor: colors.accent,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.9,
-    shadowRadius: 6,
-    elevation: 2,
+    backgroundColor: '#FFFFFF',
   },
   content: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: spacing.sm + 2,
-    paddingHorizontal: spacing.md,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
   },
   artwork: {
-    width: 44,
-    height: 44,
-    borderRadius: 10,
-    backgroundColor: colors.backgroundInput,
-    borderWidth: 1,
-    borderColor: 'rgba(0, 242, 254, 0.25)',
+    width: 40,
+    height: 40,
+    borderRadius: 4,
+    backgroundColor: '#181818',
   },
   info: {
     flex: 1,
-    marginLeft: spacing.md,
-    marginRight: spacing.sm,
+    marginLeft: 10,
+    marginRight: 8,
   },
   title: {
-    fontSize: typography.sizes.sm,
-    fontWeight: typography.weights.bold,
-    color: colors.textPrimary,
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FFFFFF',
     marginBottom: 2,
-    letterSpacing: 0.2,
   },
   artist: {
-    fontSize: typography.sizes.xs,
-    color: colors.textSecondary,
-    fontWeight: '500',
+    fontSize: 12,
+    color: '#B3B3B3',
+    fontWeight: '400',
   },
   jamBadge: {
     backgroundColor: colors.accentAlpha10,
@@ -236,34 +268,24 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     borderRadius: borderRadius.full,
     marginRight: spacing.sm,
-    borderWidth: 1,
-    borderColor: colors.accentAlpha25,
   },
   eqContainer: {
     marginRight: spacing.sm,
   },
   playButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: 'rgba(0, 242, 254, 0.15)',
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: colors.accent,
-    shadowColor: colors.accent,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.4,
-    shadowRadius: 8,
-    elevation: 3,
   },
   nextButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     justifyContent: 'center',
     alignItems: 'center',
-    marginLeft: 6,
+    marginLeft: 4,
   },
   expandHint: {
     marginLeft: spacing.xs,

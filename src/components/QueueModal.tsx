@@ -11,7 +11,6 @@ import {
   Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { BlurView } from 'expo-blur';
 import * as Haptics from 'expo-haptics';
 import { useQueue } from '../context/QueueContext';
 import { usePlayer } from '../context/PlayerContext';
@@ -84,6 +83,9 @@ export function QueueModal({ visible, onClose }: QueueModalProps) {
         <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={onClose} />
 
         <View style={styles.sheetContainer}>
+          <View style={styles.dragHandleContainer}>
+            <View style={styles.dragHandle} />
+          </View>
           {/* Header */}
           <View style={styles.header}>
             <View style={styles.headerLeft}>
@@ -257,19 +259,28 @@ const styles = StyleSheet.create({
   },
   sheetContainer: {
     height: '75%',
-    backgroundColor: '#14131A',
-    borderTopLeftRadius: borderRadius.xl,
-    borderTopRightRadius: borderRadius.xl,
-    borderWidth: 1,
-    borderColor: colors.accentAlpha25,
-    paddingTop: spacing.md,
+    backgroundColor: '#282828',
+    borderTopLeftRadius: 12,
+    borderTopRightRadius: 12,
+    borderWidth: 0,
+    paddingTop: 4,
+  },
+  dragHandleContainer: {
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  dragHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: spacing.lg,
-    paddingBottom: spacing.md,
+    paddingBottom: spacing.sm,
     borderBottomWidth: 1,
     borderBottomColor: colors.divider,
   },
@@ -333,16 +344,14 @@ const styles = StyleSheet.create({
   nowPlayingCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(184, 166, 224, 0.08)',
-    borderRadius: borderRadius.lg,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderRadius: 8,
     padding: spacing.sm,
-    borderWidth: 1,
-    borderColor: colors.accentAlpha25,
   },
   songArt: {
-    width: 46,
-    height: 46,
-    borderRadius: borderRadius.md,
+    width: 44,
+    height: 44,
+    borderRadius: 4,
     backgroundColor: colors.backgroundInput,
   },
   songInfo: {
@@ -408,7 +417,7 @@ const styles = StyleSheet.create({
   queueArt: {
     width: 40,
     height: 40,
-    borderRadius: borderRadius.sm,
+    borderRadius: 4,
     backgroundColor: colors.backgroundInput,
     marginLeft: spacing.xs,
   },
@@ -438,14 +447,11 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm + 2,
-    borderRadius: borderRadius.md,
-    backgroundColor: '#181722',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderRadius: 8,
+    backgroundColor: '#181818',
   },
   autoplayBannerActive: {
-    borderColor: 'rgba(0, 242, 254, 0.35)',
-    backgroundColor: '#161A26',
+    backgroundColor: '#202020',
   },
   autoplayLeft: {
     flexDirection: 'row',

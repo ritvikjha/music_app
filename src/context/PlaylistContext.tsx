@@ -6,10 +6,12 @@ const PLAYLISTS_KEY = '@jam_playlists';
 
 interface PlaylistContextValue {
   playlists: Playlist[];
-  createPlaylist: (name: string, description?: string) => Promise<Playlist>;
+  createPlaylist: (name: string, description?: string, songs?: Song[]) => Promise<Playlist>;
   deletePlaylist: (id: string) => Promise<void>;
   addSongToPlaylist: (playlistId: string, song: Song) => Promise<boolean>;
   removeSongFromPlaylist: (playlistId: string, songId: string) => Promise<void>;
+  renamePlaylist: (playlistId: string, name: string) => Promise<void>;
+  moveSongInPlaylist: (playlistId: string, songId: string, direction: -1 | 1) => Promise<void>;
   getPlaylist: (id: string) => Playlist | undefined;
   isLoading: boolean;
 }
@@ -49,13 +51,14 @@ export function PlaylistProvider({ children }: { children: React.ReactNode }) {
   };
 
   const createPlaylist = useCallback(
-    async (name: string, description?: string): Promise<Playlist> => {
+    async (name: string, description?: string, songs: Song[] = []): Promise<Playlist> => {
       const newPlaylist: Playlist = {
         id: `pl-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
         name: name.trim() || 'New Playlist',
         description: description?.trim(),
         createdAt: Date.now(),
-        songs: [],
+        songs,
+        coverUrl: songs[0]?.imageUrl,
       };
 
       const updated = [newPlaylist, ...playlists];
@@ -118,6 +121,25 @@ export function PlaylistProvider({ children }: { children: React.ReactNode }) {
     [playlists]
   );
 
+  const renamePlaylist = useCallback(async (playlistId: string, name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    await savePlaylists(playlists.map((playlist) => playlist.id === playlistId ? { ...playlist, name: trimmed } : playlist));
+  }, [playlists]);
+
+  const moveSongInPlaylist = useCallback(async (playlistId: string, songId: string, direction: -1 | 1) => {
+    const updated = playlists.map((playlist) => {
+      if (playlist.id !== playlistId) return playlist;
+      const from = playlist.songs.findIndex((song) => song.id === songId);
+      const to = from + direction;
+      if (from < 0 || to < 0 || to >= playlist.songs.length) return playlist;
+      const songs = [...playlist.songs];
+      [songs[from], songs[to]] = [songs[to], songs[from]];
+      return { ...playlist, songs, coverUrl: songs[0]?.imageUrl };
+    });
+    await savePlaylists(updated);
+  }, [playlists]);
+
   const getPlaylist = useCallback(
     (id: string) => {
       return playlists.find((p) => p.id === id);
@@ -133,6 +155,8 @@ export function PlaylistProvider({ children }: { children: React.ReactNode }) {
         deletePlaylist,
         addSongToPlaylist,
         removeSongFromPlaylist,
+        renamePlaylist,
+        moveSongInPlaylist,
         getPlaylist,
         isLoading,
       }}

@@ -1,15 +1,5 @@
-import React, { useEffect } from 'react';
-import { View, StyleSheet } from 'react-native';
-import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-  withRepeat,
-  withTiming,
-  withDelay,
-  withSequence,
-  Easing,
-  cancelAnimation,
-} from 'react-native-reanimated';
+import React, { useEffect, useRef } from 'react';
+import { View, StyleSheet, Animated } from 'react-native';
 import { colors } from '../theme';
 
 interface AnimatedEqualizerProps {
@@ -20,104 +10,92 @@ interface AnimatedEqualizerProps {
 }
 
 /**
- * Animated equalizer bars that bounce at different frequencies.
- * Used as a "now playing" indicator on SongCard, MiniPlayer, and JamRoom.
+ * AnimatedEqualizer
+ *
+ * Authentic live music visualizer bars:
+ * - 3 to 4 vertical equalizer bars animate independently with staggered loops.
+ * - Heights randomly fluctuate between 4px and 18px at 150ms-280ms intervals.
+ * - Smoothly collapses down to flat dots (2px) when playback is paused.
+ * - Hardware rendered with graceful animated height.
  */
 export function AnimatedEqualizer({
-  size = 16,
+  size = 18,
   color = colors.accent,
-  barCount = 3,
+  barCount = 4,
   isPlaying = true,
 }: AnimatedEqualizerProps) {
-  const bar1 = useSharedValue(0.4);
-  const bar2 = useSharedValue(0.7);
-  const bar3 = useSharedValue(0.5);
+  // Staggered independent equalizer bars
+  const h1 = useRef(new Animated.Value(isPlaying ? 6 : 2)).current;
+  const h2 = useRef(new Animated.Value(isPlaying ? 12 : 2)).current;
+  const h3 = useRef(new Animated.Value(isPlaying ? 16 : 2)).current;
+  const h4 = useRef(new Animated.Value(isPlaying ? 8 : 2)).current;
 
   useEffect(() => {
     if (!isPlaying) {
-      cancelAnimation(bar1);
-      cancelAnimation(bar2);
-      cancelAnimation(bar3);
-      bar1.value = withTiming(0.2, { duration: 200 });
-      bar2.value = withTiming(0.2, { duration: 200 });
-      bar3.value = withTiming(0.2, { duration: 200 });
+      // Smoothly collapse down to flat dots (2px) when paused
+      Animated.parallel([
+        Animated.timing(h1, { toValue: 2, duration: 250, useNativeDriver: false }),
+        Animated.timing(h2, { toValue: 2, duration: 250, useNativeDriver: false }),
+        Animated.timing(h3, { toValue: 2, duration: 250, useNativeDriver: false }),
+        Animated.timing(h4, { toValue: 2, duration: 250, useNativeDriver: false }),
+      ]).start();
       return;
     }
 
-    const animConfig = {
-      duration: 400,
-      easing: Easing.bezier(0.4, 0, 0.2, 1),
+    let isMounted = true;
+
+    // Independent random fluctuating loops between 4px and 18px at 150ms-280ms intervals
+    const createBarLoop = (val: Animated.Value, minDuration: number, maxDuration: number) => {
+      const step = () => {
+        if (!isMounted) return;
+        const maxHeight = Math.min(size, 18);
+        const targetHeight = Math.floor(4 + Math.random() * (maxHeight - 4));
+        const duration = Math.floor(minDuration + Math.random() * (maxDuration - minDuration));
+
+        Animated.timing(val, {
+          toValue: targetHeight,
+          duration,
+          useNativeDriver: false,
+        }).start(({ finished }) => {
+          if (finished && isMounted) {
+            step();
+          }
+        });
+      };
+      step();
     };
 
-    bar1.value = withRepeat(
-      withSequence(
-        withTiming(1, animConfig),
-        withTiming(0.3, animConfig)
-      ),
-      -1,
-      true
-    );
+    createBarLoop(h1, 150, 220);
+    createBarLoop(h2, 180, 260);
+    createBarLoop(h3, 160, 240);
+    createBarLoop(h4, 200, 280);
 
-    bar2.value = withDelay(
-      130,
-      withRepeat(
-        withSequence(
-          withTiming(0.9, { ...animConfig, duration: 350 }),
-          withTiming(0.2, { ...animConfig, duration: 350 })
-        ),
-        -1,
-        true
-      )
-    );
+    return () => {
+      isMounted = false;
+      h1.stopAnimation();
+      h2.stopAnimation();
+      h3.stopAnimation();
+      h4.stopAnimation();
+    };
+  }, [isPlaying, size, h1, h2, h3, h4]);
 
-    bar3.value = withDelay(
-      260,
-      withRepeat(
-        withSequence(
-          withTiming(1, { ...animConfig, duration: 450 }),
-          withTiming(0.35, { ...animConfig, duration: 450 })
-        ),
-        -1,
-        true
-      )
-    );
-  }, [isPlaying, bar1, bar2, bar3]);
-
+  const barValues = [h1, h2, h3, h4].slice(0, barCount);
   const barWidth = Math.max(2, Math.floor(size / 5));
   const gap = Math.max(1, Math.floor(size / 8));
 
-  const style1 = useAnimatedStyle(() => ({
-    height: bar1.value * size,
-  }));
-
-  const style2 = useAnimatedStyle(() => ({
-    height: bar2.value * size,
-  }));
-
-  const style3 = useAnimatedStyle(() => ({
-    height: bar3.value * size,
-  }));
-
-  const bars = [style1, style2, style3].slice(0, barCount);
-  const neonBarColors = [colors.accent, colors.accentSecondary, colors.accentGlow];
-
   return (
     <View style={[styles.container, { height: size, gap }]}>
-      {bars.map((animStyle, i) => (
+      {barValues.map((animHeight, i) => (
         <Animated.View
           key={i}
           style={[
+            styles.bar,
             {
               width: barWidth,
-              backgroundColor: color !== colors.accent ? color : neonBarColors[i % neonBarColors.length],
+              height: animHeight,
+              backgroundColor: color,
               borderRadius: barWidth / 2,
-              shadowColor: color !== colors.accent ? color : neonBarColors[i % neonBarColors.length],
-              shadowOffset: { width: 0, height: 0 },
-              shadowOpacity: 0.8,
-              shadowRadius: 4,
-              elevation: 3,
             },
-            animStyle,
           ]}
         />
       ))}
@@ -131,4 +109,8 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     justifyContent: 'center',
   },
+  bar: {
+    // Clean, crisp Spotify visualizer bar without neon glow
+  },
 });
+

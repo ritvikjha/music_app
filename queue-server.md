@@ -265,16 +265,45 @@ server.listen(PORT, () => {
 
 ---
 
-## How to Run the Server
+## How to Run the Server Locally
 
-1. Save the above code as `server.js` in your backend directory.
-2. Initialize dependencies:
+1. Initialize dependencies:
    ```bash
-   npm init -y
-   npm install express socket.io cors
+   cd server
+   npm install
    ```
-3. Run the server:
+2. Run the server:
    ```bash
    node server.js
    ```
-4. Verify the client app `src/config/index.ts` points to your machine's IP (e.g. `http://192.168.x.x:3000` or `http://localhost:3000`).
+3. Verify the client app `src/config/index.ts` points to your local machine IP or dev URL.
+
+---
+
+## Deploying to Fly.io
+
+1. **Log in to Fly.io** (one-time):
+   ```bash
+   fly auth login
+   ```
+2. **Launch & Deploy**:
+   ```bash
+   cd server
+   fly launch
+   ```
+   - When asked if you want to tweak settings, press Enter to continue.
+   - Fly builds the container in the cloud via remote builder and assigns an address (e.g. `https://your-app-name.fly.dev`).
+3. **Subsequent deployments**:
+   ```bash
+   cd server
+   fly deploy
+   ```
+4. **Update App Client Configuration**:
+   Update `SYNC_SERVER_URL` in [src/config/index.ts](file:///c:/Users/Ritvik/OneDrive/Desktop/music_app/src/config/index.ts) with your Fly.io URL:
+   ```typescript
+   export const CONFIG = {
+     SYNC_SERVER_URL: 'https://your-app-name.fly.dev',
+     // ...
+   };
+   ```
+

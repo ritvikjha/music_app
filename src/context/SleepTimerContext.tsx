@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useCallback, useRef, useEffect } from 'react';
 import { usePlayer } from './PlayerContext';
+import { audioPlayer } from '../services/audioPlayer';
 
 interface SleepTimerContextValue {
   /** Whether a timer is currently active */
@@ -26,12 +27,16 @@ export function SleepTimerProvider({ children }: { children: React.ReactNode }) 
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const targetTimeRef = useRef<number>(0);
+  const baseVolumeRef = useRef<number>(1.0);
 
   const cleanup = useCallback(() => {
     if (intervalRef.current) {
       clearInterval(intervalRef.current);
       intervalRef.current = null;
     }
+    // Restore base volume smoothly
+    audioPlayer.setVolume(baseVolumeRef.current);
+
     setIsActive(false);
     setRemainingMs(0);
     setTimerLabel(null);
@@ -45,6 +50,9 @@ export function SleepTimerProvider({ children }: { children: React.ReactNode }) 
       clearInterval(intervalRef.current);
       intervalRef.current = null;
     }
+
+    // Capture starting volume for attenuation
+    baseVolumeRef.current = audioPlayer.getVolume();
 
     if (minutes === 0) {
       // "End of Track" mode
@@ -69,6 +77,12 @@ export function SleepTimerProvider({ children }: { children: React.ReactNode }) 
       const left = Math.max(0, targetTimeRef.current - Date.now());
       setRemainingMs(left);
 
+      // Smart Volume Attenuation over final 60 seconds (60,000ms)
+      if (left <= 60000 && left > 0) {
+        const factor = left / 60000;
+        audioPlayer.setVolume(baseVolumeRef.current * factor);
+      }
+
       if (left <= 0) {
         // Timer expired — pause playback
         pause();
@@ -81,12 +95,17 @@ export function SleepTimerProvider({ children }: { children: React.ReactNode }) 
     cleanup();
   }, [cleanup]);
 
-  // Handle "End of Track" mode — watch the playback position
+  // Handle "End of Track" mode — watch the playback position & attenuate in last 10s
   useEffect(() => {
     if (!endOfTrack || !isActive) return;
 
     const trackRemaining = Math.max(0, durationMs - positionMs);
     setRemainingMs(trackRemaining);
+
+    if (trackRemaining <= 10000 && trackRemaining > 0) {
+      const factor = trackRemaining / 10000;
+      audioPlayer.setVolume(baseVolumeRef.current * factor);
+    }
 
     if (durationMs > 0 && positionMs > 0 && (durationMs - positionMs) < 500) {
       // Track is about to end

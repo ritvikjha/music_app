@@ -4,7 +4,7 @@ import { audioPlayer } from '../services/audioPlayer';
 import { getSongById } from '../services/saavn';
 import { usePlayer } from './PlayerContext';
 import { useAuth } from './AuthContext';
-import type { SyncState, Song, JamQueueEntry, JamQueueState, JamChatMessage, JamEmojiReaction } from '../types';
+import type { SyncState, Song, JamQueueEntry, JamQueueState, JamChatMessage, JamEmojiReaction, JamLyricsSync, JamVoiceSnippet, JamHostState } from '../types';
 
 interface JamContextValue {
   isInRoom: boolean;
@@ -12,9 +12,15 @@ interface JamContextValue {
   memberCount: number;
   isConnected: boolean;
   isHost: boolean;
+  hostUsername: string | null;
   jamQueue: JamQueueEntry[];
   messages: JamChatMessage[];
   reactions: JamEmojiReaction[];
+  syncedLyric: JamLyricsSync | null;
+  mutedUsers: string[];
+  volumeWeight: number;
+  allowGuestQueue: boolean;
+  allowGuestPlayback: boolean;
 
   createRoom: () => void;
   joinRoom: (code: string) => void;
@@ -30,6 +36,15 @@ interface JamContextValue {
   /** Shared FIFO queue actions */
   jamAddToQueue: (song: Song) => void;
   jamRemoveFromQueue: (songId: string) => void;
+  jamVoteSong: (songId: string) => void;
+
+  /** Real-time Lyrics, Voice Snippets & DJ Overrides */
+  broadcastLyricLine: (lineIndex: number, lineText: string) => void;
+  sendVoiceSnippet: (audioBase64: string, durationMs: number) => void;
+  djForceSkip: () => void;
+  djToggleMuteUser: (username: string) => void;
+  djSetVolumeWeight: (weight: number) => void;
+  setRoomPermissions: (permissions: { allowGuestQueue: boolean; allowGuestPlayback: boolean }) => void;
 
   /** Chat & Reactions */
   sendMessage: (text: string) => void;
@@ -56,23 +71,50 @@ export function JamProvider({ children }: { children: React.ReactNode }) {
   const [memberCount, setMemberCount] = useState(0);
   const [isConnected, setIsConnected] = useState(false);
   const [isHost, setIsHost] = useState(false);
+  const [hostUsername, setHostUsername] = useState<string | null>(null);
   const [jamQueue, setJamQueue] = useState<JamQueueEntry[]>([]);
   const [messages, setMessages] = useState<JamChatMessage[]>([]);
   const [reactions, setReactions] = useState<JamEmojiReaction[]>([]);
+  const [syncedLyric, setSyncedLyric] = useState<JamLyricsSync | null>(null);
+  const [mutedUsers, setMutedUsers] = useState<string[]>([]);
+  const [volumeWeight, setVolumeWeight] = useState<number>(1.0);
+  const [allowGuestQueue, setAllowGuestQueue] = useState(true);
+  const [allowGuestPlayback, setAllowGuestPlayback] = useState(true);
 
-  const { _forceState, setIsInJam } = usePlayer();
+  const { _forceState, setIsInJam, currentSong, isPlaying } = usePlayer();
   const { user } = useAuth();
 
   const isHostRef = useRef(false);
   const isInRoomRef = useRef(false);
+  const allowGuestQueueRef = useRef(true);
+  const allowGuestPlaybackRef = useRef(true);
   const memberCountRef = useRef(0);
   const jamQueueRef = useRef<JamQueueEntry[]>([]);
   const songCacheRef = useRef<Map<string, Song>>(new Map());
+  const userRef = useRef(user);
 
   isHostRef.current = isHost;
   isInRoomRef.current = isInRoom;
+  allowGuestQueueRef.current = allowGuestQueue;
+  allowGuestPlaybackRef.current = allowGuestPlayback;
   memberCountRef.current = memberCount;
   jamQueueRef.current = jamQueue;
+  userRef.current = user;
+
+  useEffect(() => {
+    syncManager.setUsername(user?.username || null);
+  }, [user?.username]);
+
+  useEffect(() => {
+    if (!user) return;
+    syncManager.emitPresenceUpdate({
+      username: user.username,
+      tag: user.tag,
+      currentSong: currentSong ? { title: currentSong.title, artist: currentSong.artist, imageUrl: currentSong.imageUrl } : null,
+      isPlaying,
+      roomId: isInRoom ? roomId : null,
+    });
+  }, [currentSong, isInRoom, isPlaying, roomId, user]);
 
   // Sync room state with player context
   useEffect(() => {
@@ -132,6 +174,8 @@ export function JamProvider({ children }: { children: React.ReactNode }) {
             songId: entry.songId,
             song,
             addedBy: entry.addedBy,
+            votes: entry.votes || 0,
+            upvoters: entry.upvoters || [],
           };
         })
       );
@@ -189,14 +233,62 @@ export function JamProvider({ children }: { children: React.ReactNode }) {
       }, 3500);
     });
 
+    const unsubLyrics = syncManager.onLyricsSync((lyric) => {
+      setSyncedLyric(lyric);
+    });
+
+    const unsubVoice = syncManager.onVoiceSnippet((snippet) => {
+      // 1. Add voice note message to chat history
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === snippet.id)) return prev;
+        const voiceNoteMsg: JamChatMessage = {
+          id: snippet.id,
+          roomId: snippet.roomId,
+          message: `🎙️ Voice Note (${Math.max(1, Math.round(snippet.durationMs / 1000))}s)`,
+          user: snippet.user,
+          timestamp: snippet.timestamp,
+        };
+        return [...prev.slice(-49), voiceNoteMsg];
+      });
+
+      // 2. Play audio with auto-ducking for listeners (skip playing back to the speaker)
+      const isSender = userRef.current?.username && snippet.user?.username === userRef.current.username;
+      if (snippet.audioBase64 && !isSender) {
+        audioPlayer.playVoiceSnippet(snippet.audioBase64);
+      }
+    });
+
+    const unsubHost = syncManager.onHostState((host) => {
+      setHostUsername(host.hostUsername);
+      setVolumeWeight(host.volumeWeight || 1.0);
+      setMutedUsers(host.mutedUsers || []);
+      setAllowGuestQueue(host.allowGuestQueue !== false);
+      setAllowGuestPlayback(host.allowGuestPlayback !== false);
+      setIsHost(Boolean(host.hostSocketId && syncManager.socketId === host.hostSocketId));
+    });
+
+    const unsubMuted = syncManager.onMutedUsersUpdate((list) => {
+      setMutedUsers(list);
+    });
+
+    const unsubVolWeight = syncManager.onVolumeWeightUpdate((weight) => {
+      setVolumeWeight(weight);
+      audioPlayer.setVolume(weight);
+    });
+
     return () => {
       unsubSync();
       unsubCount();
       unsubQueue();
       unsubChat();
       unsubEmoji();
+      unsubLyrics();
+      unsubVoice();
+      unsubHost();
+      unsubMuted();
+      unsubVolWeight();
     };
-  }, [_forceState]);
+  }, [_forceState, user]);
 
   // Poll connection status
   useEffect(() => {
@@ -208,6 +300,7 @@ export function JamProvider({ children }: { children: React.ReactNode }) {
 
   const createRoom = useCallback(() => {
     const code = generateRoomCode();
+    syncManager.setUsername(user?.username || null);
     syncManager.connect();
     syncManager.joinRoom(code);
     setRoomId(code);
@@ -217,11 +310,12 @@ export function JamProvider({ children }: { children: React.ReactNode }) {
     setJamQueue([]);
     setMessages([]);
     setReactions([]);
-  }, []);
+  }, [user?.username]);
 
   const joinRoom = useCallback((code: string) => {
     const normalizedCode = code.trim().toUpperCase();
     if (!normalizedCode) return;
+    syncManager.setUsername(user?.username || null);
     syncManager.connect();
     syncManager.joinRoom(normalizedCode);
     setRoomId(normalizedCode);
@@ -230,7 +324,7 @@ export function JamProvider({ children }: { children: React.ReactNode }) {
     setJamQueue([]);
     setMessages([]);
     setReactions([]);
-  }, []);
+  }, [user?.username]);
 
   const leaveRoom = useCallback(() => {
     syncManager.leaveRoom();
@@ -245,23 +339,28 @@ export function JamProvider({ children }: { children: React.ReactNode }) {
 
   // Jam-aware playback controls
   const jamPlay = useCallback(() => {
+    if (!isHostRef.current && !allowGuestPlaybackRef.current) return;
     syncManager.play();
   }, []);
 
   const jamPause = useCallback(() => {
+    if (!isHostRef.current && !allowGuestPlaybackRef.current) return;
     syncManager.pause();
   }, []);
 
   const jamSeek = useCallback((positionMs: number) => {
+    if (!isHostRef.current && !allowGuestPlaybackRef.current) return;
     syncManager.seek(positionMs);
   }, []);
 
   const jamChangeSong = useCallback((song: Song) => {
+    if (!isHostRef.current && !allowGuestPlaybackRef.current) return;
     songCacheRef.current.set(song.id, song);
     syncManager.changeSong(song.id);
   }, []);
 
   const jamSkipNext = useCallback(() => {
+    if (!isHostRef.current && !allowGuestPlaybackRef.current) return;
     if (jamQueueRef.current.length > 0) {
       const next = jamQueueRef.current[0];
       syncManager.changeSong(next.songId);
@@ -285,6 +384,7 @@ export function JamProvider({ children }: { children: React.ReactNode }) {
 
   // Shared Queue controls
   const jamAddToQueue = useCallback((song: Song) => {
+    if (!isHostRef.current && !allowGuestQueueRef.current) return;
     songCacheRef.current.set(song.id, song);
     syncManager.emitQueueAdd(song.id);
   }, []);
@@ -292,6 +392,10 @@ export function JamProvider({ children }: { children: React.ReactNode }) {
   const jamRemoveFromQueue = useCallback((songId: string) => {
     syncManager.emitQueueRemove(songId);
   }, []);
+
+  const jamVoteSong = useCallback((songId: string) => {
+    syncManager.emitQueueVote(songId, user?.username);
+  }, [user?.username]);
 
   const sendMessage = useCallback(
     (text: string) => {
@@ -345,6 +449,42 @@ export function JamProvider({ children }: { children: React.ReactNode }) {
     [roomId, user]
   );
 
+  const broadcastLyricLine = useCallback((lineIndex: number, lineText: string) => {
+    syncManager.emitLyricsSync({ lineIndex, lineText });
+  }, []);
+
+  const sendVoiceSnippet = useCallback(
+    (audioBase64: string, durationMs: number) => {
+      if (!user) return;
+      syncManager.emitVoiceSnippet({
+        audioBase64,
+        durationMs,
+        user: { username: user.username },
+      });
+    },
+    [user]
+  );
+
+  const djForceSkip = useCallback(() => {
+    syncManager.emitDjOverride({ type: 'force-skip' });
+  }, []);
+
+  const djToggleMuteUser = useCallback((targetUser: string) => {
+    syncManager.emitDjOverride({ type: 'mute-user', targetUser });
+  }, []);
+
+  const djSetVolumeWeight = useCallback((weight: number) => {
+    setVolumeWeight(weight);
+    audioPlayer.setVolume(weight);
+    syncManager.emitDjOverride({ type: 'volume-weight', volumeWeight: weight });
+  }, []);
+
+  const setRoomPermissions = useCallback((permissions: { allowGuestQueue: boolean; allowGuestPlayback: boolean }) => {
+    setAllowGuestQueue(permissions.allowGuestQueue);
+    setAllowGuestPlayback(permissions.allowGuestPlayback);
+    syncManager.updateRoomPermissions(permissions);
+  }, []);
+
   return (
     <JamContext.Provider
       value={{
@@ -353,9 +493,15 @@ export function JamProvider({ children }: { children: React.ReactNode }) {
         memberCount,
         isConnected,
         isHost,
+        hostUsername,
         jamQueue,
         messages,
         reactions,
+        syncedLyric,
+        mutedUsers,
+        volumeWeight,
+        allowGuestQueue,
+        allowGuestPlayback,
         createRoom,
         joinRoom,
         leaveRoom,
@@ -366,6 +512,13 @@ export function JamProvider({ children }: { children: React.ReactNode }) {
         jamSkipNext,
         jamAddToQueue,
         jamRemoveFromQueue,
+        jamVoteSong,
+        broadcastLyricLine,
+        sendVoiceSnippet,
+        djForceSkip,
+        djToggleMuteUser,
+        djSetVolumeWeight,
+        setRoomPermissions,
         sendMessage,
         sendReaction,
       }}

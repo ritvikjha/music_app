@@ -6,6 +6,9 @@ import type { Song } from '../types';
 const LIKED_SONGS_LEGACY_KEY = '@jam_liked_songs';
 const LIKED_SONGS_V2_KEY = '@jam_liked_songs_v2';
 const RECENT_SONGS_KEY = '@jam_recent_songs';
+const LISTENING_STATS_KEY = '@jam_listening_stats';
+
+interface ListeningStats { tracksStarted: number; listeningMs: number; activeDays: string[]; trackPlays: Record<string, number>; artistPlays: Record<string, number> }
 
 interface LibraryContextValue {
   likedSongs: Song[];
@@ -15,6 +18,9 @@ interface LibraryContextValue {
   addRecent: (song: Song) => Promise<void>;
   clearRecent: () => Promise<void>;
   isLoading: boolean;
+  listeningStats: ListeningStats;
+  recordTrackStarted: (song?: Song) => void;
+  recordListeningTime: (elapsedMs: number) => void;
 }
 
 const LibraryContext = createContext<LibraryContextValue | undefined>(undefined);
@@ -23,11 +29,18 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
   const [likedSongs, setLikedSongs] = useState<Song[]>([]);
   const [recentSongs, setRecentSongs] = useState<Song[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [listeningStats, setListeningStats] = useState<ListeningStats>({ tracksStarted: 0, listeningMs: 0, activeDays: [], trackPlays: {}, artistPlays: {} });
+  const lastStatsSaveRef = React.useRef(0);
 
   // Hydrate likes & recents with migration of legacy liked song IDs
   useEffect(() => {
     (async () => {
       try {
+        const savedStats = await AsyncStorage.getItem(LISTENING_STATS_KEY);
+        if (savedStats) {
+          const parsed = JSON.parse(savedStats);
+          setListeningStats({ tracksStarted: Number(parsed.tracksStarted) || 0, listeningMs: Number(parsed.listeningMs) || 0, activeDays: Array.isArray(parsed.activeDays) ? parsed.activeDays : [], trackPlays: parsed.trackPlays && typeof parsed.trackPlays === 'object' ? parsed.trackPlays : {}, artistPlays: parsed.artistPlays && typeof parsed.artistPlays === 'object' ? parsed.artistPlays : {} });
+        }
         // 1. Load Recents
         const storedRecents = await AsyncStorage.getItem(RECENT_SONGS_KEY);
         if (storedRecents) {
@@ -95,6 +108,36 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
     })();
   }, []);
 
+  const updateListeningStats = useCallback((update: (stats: ListeningStats) => ListeningStats, persistNow = false) => {
+    setListeningStats((previous) => {
+      const next = update(previous);
+      const now = Date.now();
+      if (persistNow || now - lastStatsSaveRef.current >= 5000) {
+        lastStatsSaveRef.current = now;
+        AsyncStorage.setItem(LISTENING_STATS_KEY, JSON.stringify(next)).catch((err) =>
+          console.warn('[LibraryContext] Save listening stats failed:', err)
+        );
+      }
+      return next;
+    });
+  }, []);
+
+  const recordTrackStarted = useCallback((song?: Song) => {
+    const today = new Date().toISOString().slice(0, 10);
+    updateListeningStats((stats) => ({
+      ...stats,
+      tracksStarted: stats.tracksStarted + 1,
+      activeDays: stats.activeDays.includes(today) ? stats.activeDays : [...stats.activeDays, today].slice(-400),
+      trackPlays: song ? { ...stats.trackPlays, [song.id]: (stats.trackPlays[song.id] || 0) + 1 } : stats.trackPlays,
+      artistPlays: song ? { ...stats.artistPlays, [song.artist]: (stats.artistPlays[song.artist] || 0) + 1 } : stats.artistPlays,
+    }), true);
+  }, [updateListeningStats]);
+
+  const recordListeningTime = useCallback((elapsedMs: number) => {
+    if (!Number.isFinite(elapsedMs) || elapsedMs <= 0 || elapsedMs > 3000) return;
+    updateListeningStats((stats) => ({ ...stats, listeningMs: stats.listeningMs + elapsedMs }));
+  }, [updateListeningStats]);
+
   const toggleLike = useCallback(async (song: Song) => {
     setLikedSongs((prev) => {
       const exists = prev.some((s) => s.id === song.id);
@@ -152,6 +195,9 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
         addRecent,
         clearRecent,
         isLoading,
+        listeningStats,
+        recordTrackStarted,
+        recordListeningTime,
       }}
     >
       {children}

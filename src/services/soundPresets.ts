@@ -11,7 +11,7 @@ export const SOUND_PRESETS: SoundPreset[] = [
     name: 'Cyber Dynamic',
     tagline: 'Studio Balance & Punch',
     icon: 'sparkles',
-    accentColor: '#00F2FE',
+    accentColor: '#1DB954',
     bands: [3, 1, 0, 2, 4],
     volumeGain: 1.0,
     playbackRate: 1.0,

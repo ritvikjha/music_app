@@ -105,6 +105,9 @@ export function SoundPresetsModal({ visible, onClose, onPresetChange }: SoundPre
         <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={onClose} />
 
         <View style={styles.sheetContainer}>
+          <View style={styles.dragHandleContainer}>
+            <View style={styles.dragHandle} />
+          </View>
           {/* Header */}
           <View style={styles.header}>
             <View style={styles.headerLeft}>
@@ -216,7 +219,7 @@ export function SoundPresetsModal({ visible, onClose, onPresetChange }: SoundPre
                       styles.presetCard,
                       isSelected && {
                         borderColor: preset.accentColor,
-                        backgroundColor: '#1C1B26',
+                        backgroundColor: colors.backgroundElevated,
                       },
                     ]}
                     activeOpacity={0.8}
@@ -357,19 +360,28 @@ const styles = StyleSheet.create({
   },
   sheetContainer: {
     maxHeight: '85%',
-    backgroundColor: '#12121A',
-    borderTopLeftRadius: borderRadius.xl,
-    borderTopRightRadius: borderRadius.xl,
-    borderWidth: 1,
-    borderColor: 'rgba(0, 242, 254, 0.18)',
-    paddingTop: spacing.md,
+    backgroundColor: '#282828',
+    borderTopLeftRadius: 12,
+    borderTopRightRadius: 12,
+    borderWidth: 0,
+    paddingTop: 4,
+  },
+  dragHandleContainer: {
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  dragHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: spacing.lg,
-    paddingBottom: spacing.md,
+    paddingBottom: spacing.sm,
     borderBottomWidth: 1,
     borderBottomColor: colors.divider,
   },
@@ -403,8 +415,8 @@ const styles = StyleSheet.create({
     paddingBottom: 48,
   },
   visualizerCard: {
-    backgroundColor: '#191824',
-    borderRadius: borderRadius.lg,
+    backgroundColor: colors.backgroundElevated,
+    borderRadius: borderRadius.card,
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.08)',
     padding: spacing.md,
@@ -464,7 +476,7 @@ const styles = StyleSheet.create({
   barTrack: {
     width: 22,
     height: 90,
-    backgroundColor: '#0F0E17',
+    backgroundColor: colors.backgroundInput,
     borderRadius: 11,
     justifyContent: 'flex-end',
     alignItems: 'center',
@@ -475,9 +487,6 @@ const styles = StyleSheet.create({
   barFill: {
     width: '100%',
     borderRadius: 11,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.6,
-    shadowRadius: 6,
   },
   freqLabel: {
     fontSize: 10,
@@ -501,8 +510,8 @@ const styles = StyleSheet.create({
   presetCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#161520',
-    borderRadius: borderRadius.md,
+    backgroundColor: colors.backgroundElevated,
+    borderRadius: borderRadius.card,
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.06)',
     padding: spacing.md,
