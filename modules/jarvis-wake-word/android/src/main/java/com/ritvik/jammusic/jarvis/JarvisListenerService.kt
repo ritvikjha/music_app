@@ -133,6 +133,8 @@ class JarvisListenerService : Service() {
     private var hardCapJob: Job? = null
     private var captureSafetyWatchdogJob: Job? = null
     private var watchdogJob: Job? = null
+    private var micPauseDebounceJob: Job? = null
+    private var micResumeDebounceJob: Job? = null
 
     private var focusRequest: AudioFocusRequest? = null
     private var notificationManager: NotificationManager? = null
@@ -235,6 +237,8 @@ class JarvisListenerService : Service() {
 
     override fun onDestroy() {
         Log.i(TAG, "Service onDestroy — releasing all resources")
+        micPauseDebounceJob?.cancel()
+        micResumeDebounceJob?.cancel()
         watchdogJob?.cancel()
         captureSafetyWatchdogJob?.cancel()
         serviceScope.cancel()
@@ -344,9 +348,10 @@ class JarvisListenerService : Service() {
         when (state) {
             TelephonyManager.CALL_STATE_RINGING,
             TelephonyManager.CALL_STATE_OFFHOOK -> {
-                Log.i(TAG, "Active phone call detected — pausing microphone listening")
+                Log.i(TAG, "Active phone call detected — pausing microphone listening (reason=phone_call_active)")
                 isCallActive = true
-                pauseListeningForMicInUse("Microphone in use (call active)")
+                micPauseDebounceJob?.cancel()
+                pauseListeningForMicInUse("phone_call_active")
             }
             TelephonyManager.CALL_STATE_IDLE -> {
                 if (isCallActive) {
@@ -367,13 +372,13 @@ class JarvisListenerService : Service() {
                         val ourSessionId = wakeWordEngine?.currentAudioSessionId ?: 0
                         val allSessions = configs?.map { it.clientAudioSessionId } ?: emptyList()
 
-                        // Check if any external client (not our own wake-word audio session) is recording
-                        val otherAppRecording = configs?.any { config ->
+                        // Check if any external client (excluding our own wake-word AudioRecord) is recording
+                        val externalConfigs = configs?.filter { config ->
                             val isOurSession = (ourSessionId != 0 && config.clientAudioSessionId == ourSessionId)
                             !isOurSession && config.clientAudioSessionId != 0
-                        } ?: false
+                        } ?: emptyList()
 
-                        // On Android 10+ (API 29+), check if our own audio session was silenced by the OS
+                        // Check if our own session was silenced by the OS due to concurrent priority capture
                         val isOurSessionSilenced = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                             configs?.any { config ->
                                 ourSessionId != 0 && config.clientAudioSessionId == ourSessionId && config.isClientSilenced
@@ -382,15 +387,58 @@ class JarvisListenerService : Service() {
                             false
                         }
 
-                        Log.d(TAG, "onRecordingConfigChanged: activeSessions=$allSessions, ourSession=$ourSessionId, otherApp=$otherAppRecording, silenced=$isOurSessionSilenced, state=${currentState.get()}")
+                        Log.d(TAG, "onRecordingConfigChanged: activeSessions=$allSessions, ourSession=$ourSessionId, externalSessions=${externalConfigs.map { it.clientAudioSessionId }}, silenced=$isOurSessionSilenced, state=${currentState.get()}")
 
-                        if ((otherAppRecording || isOurSessionSilenced) && !isCallActive && currentState.get() == JarvisState.IDLE_LISTENING) {
-                            val reason = if (isOurSessionSilenced) "Microphone silenced by system" else "Microphone in use by another app"
-                            Log.i(TAG, "Another app claimed the microphone (sessions=$allSessions, our=$ourSessionId, silenced=$isOurSessionSilenced) — pausing Jarvis: $reason")
-                            pauseListeningForMicInUse(reason)
-                        } else if (!otherAppRecording && !isOurSessionSilenced && !isCallActive && currentState.get() == JarvisState.PAUSED_MIC_IN_USE) {
-                            Log.i(TAG, "External audio recording released (sessions=$allSessions) — resuming Jarvis")
-                            resumeListeningAfterMicInUse()
+                        if ((externalConfigs.isNotEmpty() || isOurSessionSilenced) && !isCallActive && currentState.get() == JarvisState.IDLE_LISTENING) {
+                            // Cancel any pending resume debounce
+                            micResumeDebounceJob?.cancel()
+
+                            // Debounce pause with 500ms minimum dwell time to eliminate false flapping
+                            if (micPauseDebounceJob?.isActive != true) {
+                                micPauseDebounceJob = serviceScope.launch {
+                                    delay(500L) // Minimum dwell time: condition must persist continuously for 500ms
+                                    val am = getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return@launch
+                                    val currentConfigs = am.activeRecordingConfigurations
+                                    val currentOurSession = wakeWordEngine?.currentAudioSessionId ?: 0
+
+                                    val currentExternal = currentConfigs?.firstOrNull { config ->
+                                        val isOurs = (currentOurSession != 0 && config.clientAudioSessionId == currentOurSession)
+                                        !isOurs && config.clientAudioSessionId != 0
+                                    }
+
+                                    val currentSilenced = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                        currentConfigs?.any { config ->
+                                            currentOurSession != 0 && config.clientAudioSessionId == currentOurSession && config.isClientSilenced
+                                        } ?: false
+                                    } else false
+
+                                    if ((currentExternal != null || currentSilenced) && !isCallActive && currentState.get() == JarvisState.IDLE_LISTENING) {
+                                        val reason = when {
+                                            currentSilenced -> "system_silenced_concurrent_capture"
+                                            currentExternal != null -> "external_mic_recording:session_${currentExternal.clientAudioSessionId}_source_${currentExternal.clientAudioSource}"
+                                            else -> "external_mic_in_use"
+                                        }
+                                        Log.i(TAG, "External recording confirmed after 500ms dwell time ($reason) — pausing Jarvis")
+                                        pauseListeningForMicInUse(reason)
+                                    }
+                                }
+                            }
+                        } else if (externalConfigs.isEmpty() && !isOurSessionSilenced) {
+                            // If condition cleared before debounce fired, cancel pause!
+                            micPauseDebounceJob?.cancel()
+
+                            if (!isCallActive && currentState.get() == JarvisState.PAUSED_MIC_IN_USE) {
+                                // Debounce resume: wait 500ms for external app to completely release the audio track
+                                if (micResumeDebounceJob?.isActive != true) {
+                                    micResumeDebounceJob = serviceScope.launch {
+                                        delay(500L)
+                                        if (!isCallActive && currentState.get() == JarvisState.PAUSED_MIC_IN_USE) {
+                                            Log.i(TAG, "External mic release confirmed after 500ms — resuming Jarvis")
+                                            resumeListeningAfterMicInUse()
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -953,7 +1001,7 @@ class JarvisListenerService : Service() {
                         setState(JarvisState.PAUSED_CHARGING_ONLY)
                         updateNotification("Jarvis: Paused (Battery Power)", "Connect charger to resume listening")
                     } else if (isCallActive) {
-                        lastPausedReason = "Microphone in use (call active)"
+                        lastPausedReason = "phone_call_active"
                         pausedTimestamp = System.currentTimeMillis()
                         setState(JarvisState.PAUSED_MIC_IN_USE)
                         updateNotification("Jarvis: Paused", "Microphone in use (call active)")

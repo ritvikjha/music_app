@@ -95,6 +95,7 @@ export type JarvisCallbacks = {
 
 let registeredCallbacks: JarvisCallbacks = {};
 let lastWakeTime: number | null = null;
+let isJarvisRunning = false;
 
 /**
  * Duck music volume to avoid drowning the spoken command.
@@ -198,7 +199,16 @@ export async function startJarvis(callbacks: JarvisCallbacks = {}): Promise<bool
     return false;
   }
 
+  registeredCallbacks = callbacks;
+
+  // If already running and subscriptions are actively attached, update callbacks and avoid duplicate registration
+  if (isJarvisRunning && stateSub !== null) {
+    return true;
+  }
+
   try {
+    // Ensure any stale subscriptions from prior runs are cleanly removed before registering new ones
+    cleanup();
     registeredCallbacks = callbacks;
 
     // Load and apply saved sensitivity threshold
@@ -228,10 +238,14 @@ export async function startJarvis(callbacks: JarvisCallbacks = {}): Promise<bool
       registeredCallbacks.onWakeDetected?.(event.modelName, event.score);
     });
 
-    // 2. State machine transition listener
+    // 2. State machine transition listener (logs exact reason for PAUSED_MIC_IN_USE)
     stateSub = mod.addStateListener(async (event) => {
-      console.log(`[Jarvis] 🔄 State transition -> ${event.state}`);
-      logJarvisEvent('STATE_CHANGE', `Transitioned to ${event.state}`, { state: event.state });
+      const reasonSuffix = event.reason ? ` (${event.reason})` : '';
+      console.log(`[Jarvis] 🔄 State transition -> ${event.state}${reasonSuffix}`);
+      logJarvisEvent('STATE_CHANGE', `Transitioned to ${event.state}${reasonSuffix}`, {
+        state: event.state,
+        reason: event.reason || '',
+      });
       registeredCallbacks.onStateChange?.(event.state);
 
       if (event.state === 'WAKE_DETECTED') {
@@ -452,6 +466,7 @@ export async function startJarvis(callbacks: JarvisCallbacks = {}): Promise<bool
       );
     }
 
+    isJarvisRunning = true;
     return true;
   } catch (e) {
     console.error('[Jarvis] Failed to start:', e);
@@ -482,6 +497,7 @@ export async function stopJarvis(): Promise<void> {
 }
 
 function cleanup() {
+  isJarvisRunning = false;
   wakeWordSub?.remove();
   stateSub?.remove();
   transcriptSub?.remove();
