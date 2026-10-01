@@ -99,6 +99,10 @@ class JarvisListenerService : Service() {
         @Volatile
         var selectedWakeModel: String = "hey_jarvis"
 
+        /** Settings: Active voice persona (stark_uk, friday, india, us) */
+        @Volatile
+        var selectedVoicePersona: String = JarvisTtsHelper.PERSONA_STARK
+
         /** Last reason why Jarvis listening was paused */
         @Volatile
         var lastPausedReason: String = ""
@@ -183,6 +187,8 @@ class JarvisListenerService : Service() {
         onlyListenWhileCharging = prefs.getBoolean("only_listen_while_charging", onlyListenWhileCharging)
         preferredLanguage = prefs.getString("preferred_language", preferredLanguage) ?: "en-IN"
         selectedWakeModel = prefs.getString("selected_wake_model", selectedWakeModel) ?: "hey_jarvis"
+        selectedVoicePersona = prefs.getString("voice_persona", selectedVoicePersona) ?: JarvisTtsHelper.PERSONA_STARK
+        ttsHelper?.setVoicePersona(selectedVoicePersona)
 
         // Register telephony and audio listeners for mic conflicts
         registerTelephonyObserver()
@@ -1356,6 +1362,14 @@ class JarvisListenerService : Service() {
         ttsHelper?.voiceRepliesEnabled = voiceRepliesEnabled
         ttsHelper?.beepOnly = beepOnly
         Log.i(TAG, "TTS settings updated: voiceReplies=$voiceRepliesEnabled, beepOnly=$beepOnly")
+    }
+
+    fun setVoicePersona(persona: String) {
+        selectedVoicePersona = persona
+        ttsHelper?.setVoicePersona(persona)
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putString("voice_persona", persona).apply()
+        Log.i(TAG, "Voice persona updated to: $persona")
     }
 
     fun setChargingOnlyMode(enabled: Boolean) {

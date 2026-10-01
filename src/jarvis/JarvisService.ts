@@ -37,7 +37,9 @@ import type {
   WakeWordDetection,
   CommandTranscriptEvent,
   SpeechDoneEvent,
+  VoicePersona,
 } from '../../modules/jarvis-wake-word';
+export type { VoicePersona };
 
 const JARVIS_ENABLED_KEY = '@jam_jarvis_enabled';
 const JARVIS_THRESHOLD_KEY = '@jam_jarvis_threshold';
@@ -47,6 +49,7 @@ const JARVIS_CHARGING_ONLY_KEY = '@jam_jarvis_charging_only';
 const JARVIS_LANGUAGE_KEY = '@jam_jarvis_language';
 const JARVIS_ONBOARDING_DONE_KEY = '@jam_jarvis_onboarding_done';
 const JARVIS_WAKE_MODEL_KEY = '@jam_jarvis_wake_model';
+const JARVIS_VOICE_PERSONA_KEY = '@jam_jarvis_voice_persona';
 const DEFAULT_THRESHOLD = 0.5;
 
 // Lazy-import the native module (Android only)
@@ -235,6 +238,10 @@ export async function startJarvis(callbacks: JarvisCallbacks = {}): Promise<bool
     // Load and apply selected wake-word model (Hello Jarvis vs Hey Jarvis)
     const wakeModel = await getSelectedWakeModel();
     mod.setSelectedWakeModel(wakeModel);
+
+    // Load and apply selected Voice Persona (stark_uk, friday, india, us)
+    const persona = await getVoicePersona();
+    mod.setVoicePersona(persona);
 
     // Register proactive speaker for ambient briefings and alerts
     proactiveEngine.registerSpeaker(async (text: string) => {
@@ -819,6 +826,29 @@ export async function setSelectedWakeModel(model: 'hey_jarvis' | 'hello_jarvis')
     logJarvisEvent('SERVICE', `Wake phrase updated to: ${model}`);
   } catch (err) {
     console.warn('[Jarvis] Failed to save wake model selection:', err);
+  }
+}
+
+/**
+ * Active Voice Persona ('stark_uk' | 'friday' | 'india' | 'us')
+ */
+export async function getVoicePersona(): Promise<VoicePersona> {
+  try {
+    const val = await AsyncStorage.getItem(JARVIS_VOICE_PERSONA_KEY);
+    return (val as VoicePersona) || 'stark_uk';
+  } catch {
+    return 'stark_uk';
+  }
+}
+
+export async function setVoicePersona(persona: VoicePersona): Promise<void> {
+  try {
+    await AsyncStorage.setItem(JARVIS_VOICE_PERSONA_KEY, persona);
+    const mod = getModule();
+    mod?.setVoicePersona?.(persona);
+    logJarvisEvent('SERVICE', `Voice persona set to: ${persona}`);
+  } catch (err) {
+    console.warn('[Jarvis] Failed to save voice persona:', err);
   }
 }
 

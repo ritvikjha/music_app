@@ -31,7 +31,14 @@ class JarvisTtsHelper(private val context: Context) : TextToSpeech.OnInitListene
     companion object {
         private const val TAG = "JarvisTTS"
         private val EN_IN_LOCALE = Locale("en", "IN")
+        private val EN_GB_LOCALE = Locale("en", "GB")
+        private val EN_US_LOCALE = Locale("en", "US")
         private val HI_IN_LOCALE = Locale("hi", "IN")
+
+        const val PERSONA_STARK = "stark_uk"
+        const val PERSONA_FRIDAY = "friday"
+        const val PERSONA_INDIA = "india"
+        const val PERSONA_US = "us"
     }
 
     private var tts: TextToSpeech? = null
@@ -53,10 +60,20 @@ class JarvisTtsHelper(private val context: Context) : TextToSpeech.OnInitListene
     @Volatile
     var beepOnly: Boolean = false
 
+    @Volatile
+    var voicePersona: String = PERSONA_STARK
+
     /** Callback invoked whenever an utterance finishes speaking or errors out */
     var onSpeechDoneCallback: ((utteranceId: String) -> Unit)? = null
 
     init {
+        try {
+            val prefs = context.getSharedPreferences("JarvisPrefs", Context.MODE_PRIVATE)
+            voicePersona = prefs.getString("voice_persona", PERSONA_STARK) ?: PERSONA_STARK
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed reading voice_persona from prefs", e)
+        }
+
         try {
             tts = TextToSpeech(context.applicationContext, this)
         } catch (e: Exception) {
@@ -68,9 +85,6 @@ class JarvisTtsHelper(private val context: Context) : TextToSpeech.OnInitListene
         if (status == TextToSpeech.SUCCESS) {
             val engine = tts ?: return
 
-            // Default to Indian English en-IN
-            applyLocale(engine, EN_IN_LOCALE)
-
             // Audio attributes: speech / assistant
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                 val attrs = AudioAttributes.Builder()
@@ -80,11 +94,11 @@ class JarvisTtsHelper(private val context: Context) : TextToSpeech.OnInitListene
                 engine.setAudioAttributes(attrs)
             }
 
-            engine.setPitch(1.0f)
-            engine.setSpeechRate(1.05f) // Natural, crisp pacing
+            // Apply selected persona (accent, pitch, speech rate, voice)
+            applyPersonaAndLocale(engine, hasDevanagari = false)
 
             isInitialized = true
-            Log.i(TAG, "Native TextToSpeech initialized successfully (default en-IN)")
+            Log.i(TAG, "Native TextToSpeech initialized successfully (persona=$voicePersona)")
 
             // Flush pending utterances
             synchronized(pendingSpeechQueue) {
@@ -95,6 +109,98 @@ class JarvisTtsHelper(private val context: Context) : TextToSpeech.OnInitListene
             }
         } else {
             Log.w(TAG, "TextToSpeech init failed with status: $status")
+        }
+    }
+
+    /**
+     * Apply accent, pitch, and voice profile based on selected persona.
+     */
+    private fun applyPersonaAndLocale(engine: TextToSpeech, hasDevanagari: Boolean) {
+        if (hasDevanagari) {
+            applyLocale(engine, HI_IN_LOCALE)
+            engine.setPitch(1.0f)
+            engine.setSpeechRate(1.0f)
+            return
+        }
+
+        when (voicePersona) {
+            PERSONA_STARK -> {
+                // British English, deep pitch, formal pacing
+                applyLocale(engine, EN_GB_LOCALE)
+                engine.setPitch(0.88f)
+                engine.setSpeechRate(1.02f)
+                trySelectVoice(engine, EN_GB_LOCALE, isMale = true)
+            }
+            PERSONA_FRIDAY -> {
+                // Female AI tone, higher pitch, snappy pacing
+                applyLocale(engine, EN_GB_LOCALE)
+                engine.setPitch(1.20f)
+                engine.setSpeechRate(1.08f)
+                trySelectVoice(engine, EN_GB_LOCALE, isMale = false)
+            }
+            PERSONA_INDIA -> {
+                // Indian English
+                applyLocale(engine, EN_IN_LOCALE)
+                engine.setPitch(1.00f)
+                engine.setSpeechRate(1.05f)
+            }
+            PERSONA_US -> {
+                // US English
+                applyLocale(engine, EN_US_LOCALE)
+                engine.setPitch(0.95f)
+                engine.setSpeechRate(1.05f)
+            }
+            else -> {
+                applyLocale(engine, EN_GB_LOCALE)
+                engine.setPitch(0.88f)
+                engine.setSpeechRate(1.02f)
+            }
+        }
+    }
+
+    private fun trySelectVoice(engine: TextToSpeech, targetLocale: Locale, isMale: Boolean) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            try {
+                val voices = engine.voices ?: return
+                val targetLang = targetLocale.language
+                val targetCountry = targetLocale.country
+
+                val candidate = voices.firstOrNull { voice ->
+                    val matchesLocale = voice.locale.language == targetLang &&
+                            (targetCountry.isEmpty() || voice.locale.country == targetCountry)
+                    if (!matchesLocale) return@firstOrNull false
+
+                    val nameLower = voice.name.lowercase(Locale.ROOT)
+                    if (isMale) {
+                        nameLower.contains("male") || nameLower.contains("en-gb-x-rjs") || nameLower.contains("gb-b") || nameLower.contains("gb-d")
+                    } else {
+                        nameLower.contains("female") || nameLower.contains("en-gb-x-gba") || nameLower.contains("gb-a") || nameLower.contains("gb-c")
+                    }
+                } ?: voices.firstOrNull {
+                    it.locale.language == targetLang && (targetCountry.isEmpty() || it.locale.country == targetCountry)
+                }
+
+                if (candidate != null) {
+                    engine.voice = candidate
+                    Log.d(TAG, "Selected TTS voice: ${candidate.name} for persona=$voicePersona")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed selecting specific TTS voice", e)
+            }
+        }
+    }
+
+    fun setVoicePersona(persona: String) {
+        voicePersona = persona
+        try {
+            val prefs = context.getSharedPreferences("JarvisPrefs", Context.MODE_PRIVATE)
+            prefs.edit().putString("voice_persona", persona).apply()
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to persist voice_persona", e)
+        }
+        val engine = tts ?: return
+        if (isInitialized) {
+            applyPersonaAndLocale(engine, hasDevanagari = false)
         }
     }
 
@@ -229,8 +335,7 @@ class JarvisTtsHelper(private val context: Context) : TextToSpeech.OnInitListene
 
         // Detect Hindi / Devanagari characters: Unicode range U+0900 to U+097F
         val hasDevanagari = trimmed.any { it in '\u0900'..'\u097F' }
-        val targetLocale = if (hasDevanagari) HI_IN_LOCALE else EN_IN_LOCALE
-        applyLocale(engine, targetLocale)
+        applyPersonaAndLocale(engine, hasDevanagari)
 
         val utteranceId = UUID.randomUUID().toString()
 

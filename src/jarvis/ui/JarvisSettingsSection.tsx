@@ -34,6 +34,9 @@ import {
   setOnlyListenWhileCharging,
   getSelectedWakeModel,
   setSelectedWakeModel,
+  getVoicePersona,
+  setVoicePersona,
+  type VoicePersona,
   isAccessibilityServiceActive,
   openAccessibilitySettings,
   isWhatsAppAutoSendEnabled,
@@ -57,6 +60,7 @@ export const JarvisSettingsSection: React.FC<JarvisSettingsSectionProps> = ({
   const [language, setLanguage] = useState('en-IN');
   const [chargingOnly, setChargingOnly] = useState(false);
   const [wakeModel, setWakeModelState] = useState<'hey_jarvis' | 'hello_jarvis'>('hey_jarvis');
+  const [voicePersona, setVoicePersonaState] = useState<VoicePersona>('stark_uk');
   const [whatsAppAutoSend, setWhatsAppAutoSend] = useState(false);
   const [showPrivacyModal, setShowPrivacyModal] = useState(false);
 
@@ -80,6 +84,9 @@ export const JarvisSettingsSection: React.FC<JarvisSettingsSectionProps> = ({
 
         const wm = await getSelectedWakeModel();
         setWakeModelState(wm);
+
+        const vp = await getVoicePersona();
+        setVoicePersonaState(vp);
 
         const autoSend = await isWhatsAppAutoSendEnabled();
         const a11yActive = isAccessibilityServiceActive();
@@ -164,6 +171,31 @@ export const JarvisSettingsSection: React.FC<JarvisSettingsSectionProps> = ({
     await setSelectedWakeModel(model);
     const label = model === 'hello_jarvis' ? '"Hello Jarvis"' : '"Hey Jarvis" (more reliable)';
     showToast(`Wake phrase set to ${label}`, 'info');
+  };
+
+  const handleSelectVoicePersona = async (p: VoicePersona) => {
+    setVoicePersonaState(p);
+    await setVoicePersona(p);
+
+    const sampleReplies: Record<VoicePersona, string> = {
+      stark_uk: 'At your service, sir. Systems calibrated.',
+      friday: 'Online and ready, boss.',
+      india: 'Jarvis is ready to assist you.',
+      us: 'All systems operational.',
+    };
+
+    try {
+      const JarvisWakeWord = require('../../modules/jarvis-wake-word');
+      JarvisWakeWord?.speak?.(sampleReplies[p]);
+    } catch {}
+
+    const labels: Record<VoicePersona, string> = {
+      stark_uk: 'J.A.R.V.I.S. (UK Butler)',
+      friday: 'F.R.I.D.A.Y. (Female AI)',
+      india: 'Jarvis India',
+      us: 'Jarvis US',
+    };
+    showToast(`Voice set to ${labels[p]}`, 'success');
   };
 
   const getSensitivityLabel = (val: number) => {
@@ -276,7 +308,45 @@ export const JarvisSettingsSection: React.FC<JarvisSettingsSectionProps> = ({
         </Text>
       </View>
 
-      {/* 3. Voice Replies Toggle */}
+      {/* 3. Voice Persona Selector */}
+      <View style={styles.settingBlock}>
+        <View style={styles.blockHeader}>
+          <View style={styles.blockHeaderLeft}>
+            <Ionicons name="person-circle-outline" size={18} color="#38BDF8" />
+            <Text style={styles.blockTitle}>Voice Persona</Text>
+          </View>
+        </View>
+
+        <View style={styles.personaGrid}>
+          {[
+            { id: 'stark_uk' as VoicePersona, label: 'J.A.R.V.I.S.', sub: 'UK Butler', icon: '🇬🇧' },
+            { id: 'friday' as VoicePersona, label: 'F.R.I.D.A.Y.', sub: 'Female AI', icon: '👩' },
+            { id: 'india' as VoicePersona, label: 'Jarvis India', sub: 'en-IN', icon: '🇮🇳' },
+            { id: 'us' as VoicePersona, label: 'Jarvis US', sub: 'en-US', icon: '🇺🇸' },
+          ].map((item) => {
+            const isSelected = voicePersona === item.id;
+            return (
+              <TouchableOpacity
+                key={item.id}
+                style={[styles.personaCard, isSelected && styles.personaCardSelected]}
+                onPress={() => handleSelectVoicePersona(item.id)}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.personaIcon}>{item.icon}</Text>
+                <Text style={[styles.personaLabel, isSelected && styles.personaLabelSelected]}>
+                  {item.label}
+                </Text>
+                <Text style={styles.personaSub}>{item.sub}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+        <Text style={styles.phraseSubtext}>
+          Tap any persona to preview its accent, tone, and pacing.
+        </Text>
+      </View>
+
+      {/* 4. Voice Replies Toggle */}
       <View style={styles.settingRow}>
         <View style={styles.settingRowLeft}>
           <Ionicons
@@ -598,6 +668,45 @@ const styles = StyleSheet.create({
   langChipTextSelected: {
     color: colors.accentSecondary,
     fontWeight: '800',
+  },
+  personaGrid: {
+    flexDirection: 'row',
+    gap: 6,
+    marginTop: 4,
+  },
+  personaCard: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 2,
+    borderRadius: borderRadius.sm,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  personaCardSelected: {
+    backgroundColor: 'rgba(56, 189, 248, 0.15)',
+    borderColor: '#38BDF8',
+  },
+  personaIcon: {
+    fontSize: 16,
+    marginBottom: 4,
+  },
+  personaLabel: {
+    fontSize: 10,
+    color: colors.textSecondary,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  personaLabelSelected: {
+    color: '#38BDF8',
+  },
+  personaSub: {
+    fontSize: 9,
+    color: '#64748B',
+    marginTop: 2,
+    textAlign: 'center',
   },
   debugBtn: {
     flexDirection: 'row',

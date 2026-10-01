@@ -289,6 +289,32 @@ class JarvisWakeWordModule : Module() {
             JarvisListenerService.instance?.setTtsSettings(voiceRepliesEnabled, beepOnly)
         }
 
+        // Voice Persona selection (stark_uk, friday, india, us)
+        Function("setVoicePersona") { persona: String ->
+            val p = if (persona.isNotBlank()) persona else JarvisTtsHelper.PERSONA_STARK
+            JarvisListenerService.selectedVoicePersona = p
+            val service = JarvisListenerService.instance
+            if (service != null) {
+                service.setVoicePersona(p)
+            } else {
+                val context = appContext.reactContext
+                if (context != null) {
+                    val prefs = context.getSharedPreferences("JarvisPrefs", Context.MODE_PRIVATE)
+                    prefs.edit().putString("voice_persona", p).apply()
+                }
+            }
+        }
+
+        Function("getVoicePersona") {
+            val context = appContext.reactContext
+            if (context != null) {
+                val prefs = context.getSharedPreferences("JarvisPrefs", Context.MODE_PRIVATE)
+                prefs.getString("voice_persona", JarvisListenerService.selectedVoicePersona) ?: JarvisTtsHelper.PERSONA_STARK
+            } else {
+                JarvisListenerService.selectedVoicePersona
+            }
+        }
+
         // Toggle barge-in support (stopping TTS on wake word detection)
         Function("setBargeInEnabled") { enabled: Boolean ->
             JarvisListenerService.allowBargeIn = enabled

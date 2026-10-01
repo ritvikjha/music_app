@@ -211,11 +211,31 @@ export async function startFollowUpCapture(timeoutMs = 5000): Promise<void> {
   return await JarvisWakeWordNative.startFollowUpCapture(timeoutMs);
 }
 
+export type VoicePersona = 'stark_uk' | 'friday' | 'india' | 'us';
+
 /**
  * Update native TTS settings (voice replies on/off, beep only mode).
  */
 export function setTtsSettings(voiceRepliesEnabled: boolean, beepOnly: boolean): void {
   JarvisWakeWordNative.setTtsSettings(voiceRepliesEnabled, beepOnly);
+}
+
+/**
+ * Set the active TTS Voice Persona ('stark_uk' | 'friday' | 'india' | 'us').
+ */
+export function setVoicePersona(persona: VoicePersona): void {
+  JarvisWakeWordNative.setVoicePersona(persona);
+}
+
+/**
+ * Get current active Voice Persona.
+ */
+export function getVoicePersona(): VoicePersona {
+  try {
+    return (JarvisWakeWordNative.getVoicePersona() as VoicePersona) || 'stark_uk';
+  } catch {
+    return 'stark_uk';
+  }
 }
 
 /**
