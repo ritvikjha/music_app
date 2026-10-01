@@ -346,8 +346,7 @@ class JarvisListenerService : Service() {
                 val callback = object : AudioManager.AudioRecordingCallback() {
                     override fun onRecordingConfigChanged(configs: List<AudioRecordingConfiguration>?) {
                         val otherAppRecording = configs?.any { config ->
-                            config.clientAudioSessionId != 0 &&
-                            config.clientPackageName != packageName
+                            config.clientAudioSessionId != 0
                         } ?: false
 
                         if (otherAppRecording && !isCallActive && currentState.get() == JarvisState.IDLE_LISTENING) {

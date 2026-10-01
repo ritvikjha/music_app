@@ -404,11 +404,12 @@ class JarvisWakeWordModule : Module() {
         }
 
         Function("openAccessibilitySettings") {
-            val context = appContext.reactContext ?: return@Function
+            val context = appContext.reactContext ?: return@Function null
             val intent = Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             context.startActivity(intent)
+            null
         }
 
         Function("sendWhatsAppMessage") { contact: String, message: String ->
