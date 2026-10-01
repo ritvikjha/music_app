@@ -752,8 +752,15 @@ class JarvisListenerService : Service() {
     private fun startWakeWordEngine() {
         if (wakeWordEngine != null) {
             if (wakeWordEngine?.isRunning == true) return
-            Log.w(TAG, "wakeWordEngine instance exists but is not running — releasing stale instance")
-            stopWakeWordEngine()
+            try {
+                wakeWordEngine?.start()
+                Log.i(TAG, "WakeWordEngine resumed instantly with warm ONNX models (<10ms)")
+                return
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to resume warm WakeWordEngine, will reinitialize", e)
+                try { wakeWordEngine?.release() } catch (_: Exception) {}
+                wakeWordEngine = null
+            }
         }
         if (isCapturingCommand.get()) {
             Log.w(TAG, "Refusing startWakeWordEngine: command capture is active")
@@ -792,7 +799,7 @@ class JarvisListenerService : Service() {
                 context = this,
                 models = models,
                 detectionMode = DetectionMode.SINGLE_BEST,
-                detectionCooldownMs = 2000L
+                detectionCooldownMs = 600L
             )
 
             wakeWordEngine?.start()
@@ -1419,7 +1426,7 @@ class JarvisListenerService : Service() {
 
     fun speak(text: String, onDone: (() -> Unit)? = null) {
         val state = currentState.get()
-        if (state == JarvisState.CAPTURING || state == JarvisState.TRANSCRIBING) {
+        if (state == JarvisState.CAPTURING) {
             Log.w(TAG, "Speak rejected: microphone capture is actively recording ($state)")
             onDone?.invoke()
             return
