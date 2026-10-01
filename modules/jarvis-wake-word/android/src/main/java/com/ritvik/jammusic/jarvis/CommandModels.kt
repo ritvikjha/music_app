@@ -20,7 +20,7 @@ data class CommandDefinition(
     val id: String,
     val patterns: List<Regex>,
     val slotExtractor: (String) -> Map<String, String>?,
-    val handler: suspend (Context, Map<String, String>) -> CommandResult,
+    val handler: (Context, Map<String, String>) -> CommandResult,
     val lockScreenSafe: Boolean,
     val requiredPermissions: List<String> = emptyList()
 )

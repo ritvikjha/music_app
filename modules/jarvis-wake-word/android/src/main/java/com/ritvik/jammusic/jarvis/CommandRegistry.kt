@@ -405,7 +405,7 @@ object CommandRegistry {
      * Supports "Warp Speed" Multi-Command Chaining across conjunctions ("and", "then", "aur", "fir", "ke baad").
      * Returns CommandResult if handled, or null if it should be delegated to JS (music/LLM).
      */
-    suspend fun executeIfMatched(context: Context, rawTranscript: String): CommandResult? {
+    fun executeIfMatched(context: Context, rawTranscript: String): CommandResult? {
         val start = System.currentTimeMillis()
         val normalized = normalize(rawTranscript)
 

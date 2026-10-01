@@ -50,9 +50,7 @@
         <action android:name="androidx.media3.session.MediaSessionService"/>
       </intent-filter>
     </service>
-    <service android:name="com.ritvik.jammusic.jarvis.JarvisListenerService"
-             android:exported="false"
-             android:foregroundServiceType="microphone" />
+    <service android:name="com.ritvik.jammusic.jarvis.JarvisListenerService" android:exported="false" android:foregroundServiceType="microphone"/>
     <service android:name="com.ritvik.jammusic.jarvis.JarvisAccessibilityService" android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE" android:exported="true">
       <intent-filter>
         <action android:name="android.accessibilityservice.AccessibilityService"/>
