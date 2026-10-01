@@ -22,6 +22,7 @@ import { REPLIES, pickVariant, formatChatReply } from '../brain/replies';
 import { saveNote, findNote } from '../memory/notepad';
 import { recordSongPlay, recordMood, getUsualQuery } from '../memory/musicProfile';
 import { executeTool } from '../tools/toolRegistry';
+import { searchWebKnowledge } from '../tools/webSearchTool';
 import { proactiveEngine } from '../ambient/proactiveEngine';
 
 // Optional native volume control helper
@@ -905,7 +906,25 @@ async function executeLiveIntent(
     }
 
     case 'CHAT': {
+      const query = slots?.query || slots?.raw;
+      const isPlaceholder = !intentResult.spokenReply ||
+        /^let me check/i.test(intentResult.spokenReply) ||
+        intentResult.spokenReply === "Let me check that for you.";
 
+      if (query && isPlaceholder) {
+        try {
+          const ans = await searchWebKnowledge(query);
+          if (ans && !ans.includes('Unable to complete web search') && !ans.includes('could not find a definitive summary')) {
+            return {
+              ok: true,
+              spokenReply: formatChatReply(ans),
+              toast: { message: 'Knowledge Search', type: 'info' },
+            };
+          }
+        } catch (e) {
+          console.warn('[Jarvis Executor] Knowledge search error:', e);
+        }
+      }
 
       return {
         ok: true,
@@ -1278,6 +1297,24 @@ async function executeFallbackIntent(intentResult: IntentResult): Promise<Action
     }
 
     case 'CHAT': {
+      const query = slots?.query || slots?.raw;
+      const isPlaceholder = !intentResult.spokenReply ||
+        /^let me check/i.test(intentResult.spokenReply) ||
+        intentResult.spokenReply === "Let me check that for you.";
+
+      if (query && isPlaceholder) {
+        try {
+          const ans = await searchWebKnowledge(query);
+          if (ans && !ans.includes('Unable to complete web search') && !ans.includes('could not find a definitive summary')) {
+            return {
+              ok: true,
+              spokenReply: ans,
+            };
+          }
+        } catch (e) {
+          console.warn('[Jarvis Fallback] Knowledge search error:', e);
+        }
+      }
 
       return {
         ok: true,

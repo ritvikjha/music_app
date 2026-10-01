@@ -607,10 +607,69 @@ const matchPlaySongOrArtist: PatternMatcher = (text) => {
 // ==========================================
 
 const matchQuestionsOrChat: PatternMatcher = (text) => {
+  // 1. Direct Stark Conversational Greetings
+  if (/^(?:hello|hi|hey|good\s+morning|good\s+evening|good\s+afternoon)\b/i.test(text)) {
+    return {
+      intent: 'CHAT',
+      slots: {},
+      confidence: 0.95,
+      spokenReply: "Hello, sir. How may I assist you today?",
+      source: 'local',
+    };
+  }
+
+  if (/^(?:how\s+are\s+you|kaisa\s+hai|kaise\s+ho)\b/i.test(text)) {
+    return {
+      intent: 'CHAT',
+      slots: {},
+      confidence: 0.95,
+      spokenReply: "All systems operating at peak efficiency, sir.",
+      source: 'local',
+    };
+  }
+
+  if (/^(?:who\s+are\s+you|what\s+is\s+your\s+name|tum\s+kaun\s+ho)\b/i.test(text)) {
+    return {
+      intent: 'CHAT',
+      slots: {},
+      confidence: 0.95,
+      spokenReply: "I am Jarvis, your personal AI music and device assistant.",
+      source: 'local',
+    };
+  }
+
+  if (/^(?:what\s+can\s+you\s+do|tum\s+kya\s+kar\s+sakte\s+ho)\b/i.test(text)) {
+    return {
+      intent: 'CHAT',
+      slots: {},
+      confidence: 0.95,
+      spokenReply: "I can control your music, automate apps, search web knowledge, set alarms, and calculate math.",
+      source: 'local',
+    };
+  }
+
+  // 2. Explanation & Knowledge queries: "explain Dor", "tell me about Coldplay", "who is A.R. Rahman", "what is photosynthesis"
+  const knowledgeMatch =
+    text.match(/^(?:explain|tell\s+me\s+about|what\s+is|what\s+are|who\s+is|who\s+was|search\s+for|look\s+up|google\s+for)\s+(.+)$/i) ||
+    text.match(/^(.+?)\s+(?:kya\s+hai|kaun\s+hai|ke\s+baare\s+me\s+batao|explain\s+karo)$/i);
+
+  if (knowledgeMatch) {
+    const rawTopic = (knowledgeMatch[1] || knowledgeMatch[2] || '').trim();
+    if (rawTopic.length > 0) {
+      return {
+        intent: 'WEB_SEARCH',
+        slots: { query: rawTopic },
+        confidence: 0.95,
+        spokenReply: `Looking up ${rawTopic}, sir.`,
+        source: 'local',
+      };
+    }
+  }
+
+  // 3. General catch-all question fallback
   const isQuestion =
     /^(who|what|why|when|where|how|tell me|explain|can you tell)\b/i.test(text) ||
-    /^(kaun|kya|kyun|kab|kahan|kaise|batao)\b/i.test(text) ||
-    /^(hello|hi|good morning|good evening|how are you|who are you|what can you do)\b/i.test(text);
+    /^(kaun|kya|kyun|kab|kahan|kaise|batao)\b/i.test(text);
 
   if (isQuestion) {
     return {
