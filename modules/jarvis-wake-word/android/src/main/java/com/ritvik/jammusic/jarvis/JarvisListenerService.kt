@@ -957,10 +957,10 @@ class JarvisListenerService : Service() {
                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
                 putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName)
 
-                // Precise timeouts: minimum speech 800ms, complete silence 1800ms, possible silence 1500ms
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 800L)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1800L)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
+                // Ultra-low latency timeouts: finalize immediately after user finishes speaking
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 300L)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 750L)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 500L)
             }
 
             recognizer.setRecognitionListener(object : RecognitionListener {
@@ -1227,8 +1227,8 @@ class JarvisListenerService : Service() {
                 abandonTransientAudioFocus()
                 setState(JarvisState.COOLDOWN)
                 updateNotification("Jarvis is listening", "Waiting for \"Hey Jarvis\"…")
-                // Prompt instruction: allow 400ms for OS audio server and speech recognizer to fully release hardware mic
-                delay(400L)
+                // Prompt instruction: allow 200ms for OS audio server and speech recognizer to fully release hardware mic
+                delay(200L)
             } catch (e: Exception) {
                 Log.w(TAG, "Exception during finishCapture cleanup", e)
             } finally {
