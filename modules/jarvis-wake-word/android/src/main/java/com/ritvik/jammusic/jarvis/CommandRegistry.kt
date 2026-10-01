@@ -367,6 +367,329 @@ object CommandRegistry {
                 lockScreenSafe = true
             )
         )
+
+        // ==========================================
+        // 12. BRIGHTNESS
+        // ==========================================
+        COMMANDS.add(
+            CommandDefinition(
+                id = "BRIGHTNESS_SET",
+                patterns = listOf(
+                    Regex("""^(?:set\s+)?brightness\s+(?:to\s+)?(\d+)\s*(?:percent|%)?$"""),
+                    Regex("""^screen\s+brightness\s+(\d+)\s*(?:percent|%)?$"""),
+                    Regex("""^brightness\s+(\d+)\s*(?:percent)?(?:\s*karo)?$""")
+                ),
+                slotExtractor = { input ->
+                    val m = Regex("""(\d+)""").find(input)
+                    m?.let { mapOf("percent" to it.groupValues[1]) }
+                },
+                handler = { context, slots ->
+                    val pct = slots["percent"]?.toIntOrNull() ?: 50
+                    BrightnessHandler.setBrightness(context, pct)
+                },
+                lockScreenSafe = true
+            )
+        )
+
+        COMMANDS.add(
+            CommandDefinition(
+                id = "BRIGHTNESS_UP",
+                patterns = listOf(
+                    Regex("""^brightness\s*(?:up|increase|raise|bright|brighten)$"""),
+                    Regex("""^(?:screen\s+)?(?:brighten|brighter)$"""),
+                    Regex("""^brightness\s*(?:badhao|tez\s*karo)$""")
+                ),
+                slotExtractor = { emptyMap() },
+                handler = { context, _ -> BrightnessHandler.adjustBrightness(context, 1) },
+                lockScreenSafe = true
+            )
+        )
+
+        COMMANDS.add(
+            CommandDefinition(
+                id = "BRIGHTNESS_DOWN",
+                patterns = listOf(
+                    Regex("""^brightness\s*(?:down|decrease|lower|dim|reduce)$"""),
+                    Regex("""^(?:screen\s+)?(?:dim|dimmer|darker)$"""),
+                    Regex("""^brightness\s*(?:kam\s*karo|dheemi\s*karo)$""")
+                ),
+                slotExtractor = { emptyMap() },
+                handler = { context, _ -> BrightnessHandler.adjustBrightness(context, -1) },
+                lockScreenSafe = true
+            )
+        )
+
+        COMMANDS.add(
+            CommandDefinition(
+                id = "BRIGHTNESS_AUTO",
+                patterns = listOf(
+                    Regex("""^auto\s*brightness\s*(?:on|enable)?$"""),
+                    Regex("""^(?:turn\s+on\s+)?adaptive\s*brightness$""")
+                ),
+                slotExtractor = { emptyMap() },
+                handler = { context, _ -> BrightnessHandler.setAutoBrightness(context, true) },
+                lockScreenSafe = true
+            )
+        )
+
+        // ==========================================
+        // 13. CONNECTIVITY (WiFi / Bluetooth / Airplane / Mobile Data)
+        // ==========================================
+        COMMANDS.add(
+            CommandDefinition(
+                id = "WIFI_ON",
+                patterns = listOf(
+                    Regex("""^(?:turn\s+on\s+)?(?:wi-?fi|wifi)\s*(?:on)?$"""),
+                    Regex("""^(?:wi-?fi|wifi)\s*(?:chalu\s*karo|on\s*karo|connect\s*karo)$"""),
+                    Regex("""^(?:enable|connect)\s+(?:wi-?fi|wifi)$""")
+                ),
+                slotExtractor = { emptyMap() },
+                handler = { context, _ -> ConnectivityHandler.setWifi(context, true) },
+                lockScreenSafe = true
+            )
+        )
+
+        COMMANDS.add(
+            CommandDefinition(
+                id = "WIFI_OFF",
+                patterns = listOf(
+                    Regex("""^(?:turn\s+off\s+)?(?:wi-?fi|wifi)\s*(?:off)?$"""),
+                    Regex("""^(?:wi-?fi|wifi)\s*(?:band\s*karo|off\s*karo|disconnect\s*karo)$"""),
+                    Regex("""^(?:disable|disconnect)\s+(?:wi-?fi|wifi)$""")
+                ),
+                slotExtractor = { emptyMap() },
+                handler = { context, _ -> ConnectivityHandler.setWifi(context, false) },
+                lockScreenSafe = true
+            )
+        )
+
+        COMMANDS.add(
+            CommandDefinition(
+                id = "WIFI_TOGGLE",
+                patterns = listOf(
+                    Regex("""^toggle\s+(?:wi-?fi|wifi)$""")
+                ),
+                slotExtractor = { emptyMap() },
+                handler = { context, _ -> ConnectivityHandler.toggleWifi(context) },
+                lockScreenSafe = true
+            )
+        )
+
+        COMMANDS.add(
+            CommandDefinition(
+                id = "BLUETOOTH_ON",
+                patterns = listOf(
+                    Regex("""^(?:turn\s+on\s+)?bluetooth\s*(?:on)?$"""),
+                    Regex("""^bluetooth\s*(?:chalu\s*karo|on\s*karo|connect\s*karo)$"""),
+                    Regex("""^(?:enable|connect)\s+bluetooth$""")
+                ),
+                slotExtractor = { emptyMap() },
+                handler = { context, _ -> ConnectivityHandler.setBluetooth(context, true) },
+                lockScreenSafe = true
+            )
+        )
+
+        COMMANDS.add(
+            CommandDefinition(
+                id = "BLUETOOTH_OFF",
+                patterns = listOf(
+                    Regex("""^(?:turn\s+off\s+)?bluetooth\s*(?:off)?$"""),
+                    Regex("""^bluetooth\s*(?:band\s*karo|off\s*karo|disconnect\s*karo)$"""),
+                    Regex("""^(?:disable|disconnect)\s+bluetooth$""")
+                ),
+                slotExtractor = { emptyMap() },
+                handler = { context, _ -> ConnectivityHandler.setBluetooth(context, false) },
+                lockScreenSafe = true
+            )
+        )
+
+        COMMANDS.add(
+            CommandDefinition(
+                id = "BLUETOOTH_TOGGLE",
+                patterns = listOf(
+                    Regex("""^toggle\s+bluetooth$""")
+                ),
+                slotExtractor = { emptyMap() },
+                handler = { context, _ -> ConnectivityHandler.toggleBluetooth(context) },
+                lockScreenSafe = true
+            )
+        )
+
+        COMMANDS.add(
+            CommandDefinition(
+                id = "AIRPLANE_MODE",
+                patterns = listOf(
+                    Regex("""^(?:toggle\s+|turn\s+on\s+|turn\s+off\s+)?(?:airplane|aeroplane|flight)\s*mode$"""),
+                    Regex("""^(?:airplane|aeroplane|flight)\s*mode\s*(?:on|off|toggle)?$"""),
+                    Regex("""^(?:airplane|flight)\s*mode\s*(?:karo|lagao|hatao)$""")
+                ),
+                slotExtractor = { emptyMap() },
+                handler = { context, _ -> ConnectivityHandler.openAirplaneSettings(context) },
+                lockScreenSafe = true
+            )
+        )
+
+        COMMANDS.add(
+            CommandDefinition(
+                id = "MOBILE_DATA",
+                patterns = listOf(
+                    Regex("""^(?:toggle\s+|turn\s+on\s+|turn\s+off\s+)?(?:mobile\s+)?data$"""),
+                    Regex("""^(?:mobile\s+)?data\s*(?:on|off|toggle|chalu\s*karo|band\s*karo)$"""),
+                    Regex("""^(?:internet|net)\s*(?:on|off|chalu\s*karo|band\s*karo)$""")
+                ),
+                slotExtractor = { emptyMap() },
+                handler = { context, _ -> ConnectivityHandler.openMobileDataSettings(context) },
+                lockScreenSafe = true
+            )
+        )
+
+        // ==========================================
+        // 14. CLIPBOARD
+        // ==========================================
+        COMMANDS.add(
+            CommandDefinition(
+                id = "CLIPBOARD_READ",
+                patterns = listOf(
+                    Regex("""^(?:read\s+)?(?:my\s+)?clipboard$"""),
+                    Regex("""^(?:what(?:'s|\s+is)\s+(?:on\s+|in\s+)?(?:my\s+)?)?clipboard$"""),
+                    Regex("""^clipboard\s*(?:padho|padh\s*do|batao|read\s*karo)$"""),
+                    Regex("""^(?:what\s+did\s+I\s+copy|kya\s+copy\s+kiya)$""")
+                ),
+                slotExtractor = { emptyMap() },
+                handler = { context, _ -> ClipboardHandler.readClipboard(context) },
+                lockScreenSafe = false
+            )
+        )
+
+        // ==========================================
+        // 15. NOTIFICATIONS
+        // ==========================================
+        COMMANDS.add(
+            CommandDefinition(
+                id = "READ_NOTIFICATIONS",
+                patterns = listOf(
+                    Regex("""^(?:read\s+)?(?:my\s+)?notifications$"""),
+                    Regex("""^(?:any|check)\s+notifications$"""),
+                    Regex("""^(?:koi|kuch)\s+notification(?:s)?\s*(?:aaya|aaye|hai|hain)?$"""),
+                    Regex("""^notification(?:s)?\s*(?:padho|padh\s*do|batao|check\s*karo|dikhao)$"""),
+                    Regex("""^(?:what\s+are\s+my|show\s+my)\s+notifications$""")
+                ),
+                slotExtractor = { emptyMap() },
+                handler = { context, _ -> NotificationReaderHandler.readNotifications(context) },
+                lockScreenSafe = false
+            )
+        )
+
+        // ==========================================
+        // 16. TIME / DATE / DAY
+        // ==========================================
+        COMMANDS.add(
+            CommandDefinition(
+                id = "GET_TIME",
+                patterns = listOf(
+                    Regex("""^(?:what(?:'s|\s+is)\s+(?:the\s+)?)?(?:current\s+)?time$"""),
+                    Regex("""^(?:tell\s+me\s+the\s+)?time$"""),
+                    Regex("""^(?:kitne\s+baje\s+hain|kya\s+time\s+hua|time\s+batao|waqt\s+batao|samay\s+batao)$"""),
+                    Regex("""^(?:what\s+time\s+is\s+it|time\s+kya\s+hai|kya\s+time\s+hai)$""")
+                ),
+                slotExtractor = { emptyMap() },
+                handler = { context, _ -> TimeDateHandler.getCurrentTime(context) },
+                lockScreenSafe = true
+            )
+        )
+
+        COMMANDS.add(
+            CommandDefinition(
+                id = "GET_DATE",
+                patterns = listOf(
+                    Regex("""^(?:what(?:'s|\s+is)\s+(?:the\s+|today(?:'s)?\s+)?)?date$"""),
+                    Regex("""^(?:today(?:'s)?\s+)?date$"""),
+                    Regex("""^(?:aaj\s+)?(?:kya\s+)?(?:date|tarikh)\s*(?:hai|batao)?$"""),
+                    Regex("""^(?:what\s+is\s+)?today(?:'s)?\s+date$""")
+                ),
+                slotExtractor = { emptyMap() },
+                handler = { context, _ -> TimeDateHandler.getCurrentDate(context) },
+                lockScreenSafe = true
+            )
+        )
+
+        COMMANDS.add(
+            CommandDefinition(
+                id = "GET_DAY",
+                patterns = listOf(
+                    Regex("""^(?:what\s+day\s+is\s+(?:it|today)|which\s+day\s+is\s+(?:it|today))$"""),
+                    Regex("""^(?:aaj\s+)?(?:kya|kaun\s*sa)\s+(?:din|day)\s*(?:hai)?$""")
+                ),
+                slotExtractor = { emptyMap() },
+                handler = { context, _ -> TimeDateHandler.getDayOfWeek(context) },
+                lockScreenSafe = true
+            )
+        )
+
+        // ==========================================
+        // 17. MATH / CALCULATOR
+        // ==========================================
+        COMMANDS.add(
+            CommandDefinition(
+                id = "CALCULATE",
+                patterns = listOf(
+                    Regex("""^(?:calculate|compute|solve|what(?:'s|\s+is))\s+(.+)$"""),
+                    Regex("""^(\d+(?:\.\d+)?)\s*(?:plus|minus|times|divided\s+by|multiplied\s+by|percent\s+of)\s+(\d+(?:\.\d+)?)$"""),
+                    Regex("""^(?:hisab\s+karo|calculate\s+karo)\s+(.+)$"""),
+                    Regex("""^(\d+(?:\.\d+)?)\s*(?:jama|guna|bata|kam)\s+(\d+(?:\.\d+)?)$""")
+                ),
+                slotExtractor = { input ->
+                    val cleaned = input
+                        .replace(Regex("""^(?:calculate|compute|solve|what(?:'s|\s+is)|hisab\s+karo|calculate\s+karo)\s*""", RegexOption.IGNORE_CASE), "")
+                        .trim()
+                    if (cleaned.isNotBlank()) mapOf("expression" to cleaned) else null
+                },
+                handler = { context, slots ->
+                    val expr = slots["expression"] ?: ""
+                    MathHandler.calculate(context, expr)
+                },
+                lockScreenSafe = true
+            )
+        )
+
+        // ==========================================
+        // 18. NEW STARK PROTOCOLS (Morning, Drive, Focus)
+        // ==========================================
+        COMMANDS.add(
+            CommandDefinition(
+                id = "PROTOCOL_MORNING",
+                patterns = listOf(
+                    Regex("""^(?:protocol\s+morning|morning\s+protocol|good\s*morning|subah\s+ho\s+gayi|morning\s+mode)$""")
+                ),
+                slotExtractor = { emptyMap() },
+                handler = { context, _ -> StarkProtocolsHandler.executeProtocolMorning(context) },
+                lockScreenSafe = true
+            )
+        )
+
+        COMMANDS.add(
+            CommandDefinition(
+                id = "PROTOCOL_DRIVE",
+                patterns = listOf(
+                    Regex("""^(?:protocol\s+drive|drive\s+protocol|driving\s+mode|drive\s+mode|gaadi\s+mode)$""")
+                ),
+                slotExtractor = { emptyMap() },
+                handler = { context, _ -> StarkProtocolsHandler.executeProtocolDrive(context) },
+                lockScreenSafe = true
+            )
+        )
+
+        COMMANDS.add(
+            CommandDefinition(
+                id = "PROTOCOL_FOCUS",
+                patterns = listOf(
+                    Regex("""^(?:protocol\s+focus|focus\s+protocol|focus\s+mode|study\s+mode|dnd|do\s+not\s+disturb|padhai\s+mode)$""")
+                ),
+                slotExtractor = { emptyMap() },
+                handler = { context, _ -> StarkProtocolsHandler.executeProtocolFocus(context) },
+                lockScreenSafe = true
+            )
+        )
     }
 
     /**
