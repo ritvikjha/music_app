@@ -24,6 +24,7 @@ import { recordSongPlay, recordMood, getUsualQuery } from '../memory/musicProfil
 import { executeTool } from '../tools/toolRegistry';
 import { searchWebKnowledge } from '../tools/webSearchTool';
 import { proactiveEngine } from '../ambient/proactiveEngine';
+import { Linking } from 'react-native';
 
 // Optional native volume control helper
 let JarvisNativeModule: any = null;
@@ -905,6 +906,24 @@ async function executeLiveIntent(
       };
     }
 
+    case 'CALL': {
+      const contact = slots?.contact || slots?.query || '';
+      try {
+        if (JarvisNativeModule?.callContact) {
+          JarvisNativeModule.callContact(contact);
+        } else {
+          Linking.openURL(`tel:${encodeURIComponent(contact)}`);
+        }
+      } catch (err) {
+        Linking.openURL(`tel:${encodeURIComponent(contact)}`);
+      }
+      return {
+        ok: true,
+        spokenReply: formatChatReply(intentResult.spokenReply || `Calling ${contact}...`),
+        toast: { message: `Calling ${contact}`, type: 'info' },
+      };
+    }
+
     case 'CHAT': {
       const query = slots?.query || slots?.raw;
       const isPlaceholder = !intentResult.spokenReply ||
@@ -1294,6 +1313,23 @@ async function executeFallbackIntent(intentResult: IntentResult): Promise<Action
         briefing = 'Good morning, sir. Systems operational.';
       }
       return { ok: true, spokenReply: briefing };
+    }
+
+    case 'CALL': {
+      const contact = slots?.contact || slots?.query || '';
+      try {
+        if (JarvisNativeModule?.callContact) {
+          JarvisNativeModule.callContact(contact);
+        } else {
+          Linking.openURL(`tel:${encodeURIComponent(contact)}`);
+        }
+      } catch (err) {
+        Linking.openURL(`tel:${encodeURIComponent(contact)}`);
+      }
+      return {
+        ok: true,
+        spokenReply: intentResult.spokenReply || `Calling ${contact}...`,
+      };
     }
 
     case 'CHAT': {

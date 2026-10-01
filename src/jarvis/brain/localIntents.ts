@@ -725,6 +725,38 @@ const matchWhatsAppMessage: PatternMatcher = (text) => {
   return null;
 };
 
+const matchCallContact: PatternMatcher = (text) => {
+  // English: "call mom", "call rahul", "phone priya", "dial 123"
+  const m1 = text.match(/^(?:call|phone|make\s+a\s+call\s+to|dial)\s+([a-zA-Z0-9\s+]+)$/i);
+  if (m1) {
+    const contact = m1[1].trim();
+    if (contact && !/^(?:it|song|music|the\s+song|next|back)$/i.test(contact)) {
+      return {
+        intent: 'CALL',
+        slots: { contact },
+        confidence: 0.98,
+        spokenReply: `Calling ${contact}...`,
+        source: 'local',
+      };
+    }
+  }
+
+  // Hinglish: "rahul ko call karo", "mom ko phone lagao"
+  const m2 = text.match(/^([a-zA-Z0-9\s+]+?)\s+(?:ko\s+)?(?:call\s*(?:karo|lagao|milao)|phone\s*(?:karo|lagao))$/i);
+  if (m2) {
+    const contact = m2[1].trim();
+    return {
+      intent: 'CALL',
+      slots: { contact },
+      confidence: 0.98,
+      spokenReply: `${contact} ko call mila raha hu...`,
+      source: 'local',
+    };
+  }
+
+  return null;
+};
+
 const matchStarkEasterEggs: PatternMatcher = (text) => {
   // 1. "Are you there?"
   if (/^(?:are\s+you\s+there|you\s+there|there\s+jarvis|kya\s+tum\s+wahan\s+ho)$/i.test(text)) {
@@ -1194,6 +1226,7 @@ const MATCHERS: PatternMatcher[] = [
   matchMorningBriefing,
   matchStatusReport,
   matchWhatsAppMessage,
+  matchCallContact,
   matchMemory,
   matchTools,
   matchPause,
