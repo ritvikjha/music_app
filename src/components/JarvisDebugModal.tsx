@@ -28,7 +28,7 @@ import { colors, spacing, borderRadius, typography } from '../theme';
 import { parseIntent } from '../jarvis/brain/router';
 import type { IntentResult } from '../jarvis/brain/types';
 import { executeIntent, type ActionResult } from '../jarvis/actions/executor';
-import { runBrainTestSuite, type TestSuiteSummary } from '../jarvis/brain/__tests__/testUtterances';
+import { runBrainTestSuite, type TestSuiteSummary } from '../jarvis/brain/testUtterances';
 import {
   getJarvisLogs,
   clearJarvisLogs,

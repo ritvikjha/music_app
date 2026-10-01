@@ -12,8 +12,8 @@
  * detailed pass/fail statistics, resolution source (local vs LLM), and latencies.
  */
 
-import { parseIntent } from '../router';
-import type { IntentName } from '../types';
+import { parseIntent } from './router';
+import type { IntentName } from './types';
 
 export interface TestCase {
   utterance: string;
