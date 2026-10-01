@@ -17,6 +17,14 @@ export function calculateExpression(input: string): string {
     return `${pct}% of ${total} is ${cleanNumber(result)}`;
   }
 
+  // Handle "multiply X and/by/into/* Y" or "multiply X Y"
+  const mulMatch = expr.match(/^(?:multiply\s+)?(\d+(?:\.\d+)?)\s*(?:and|by|into|with|times|\*|x|\s)\s*(\d+(?:\.\d+)?)$/i);
+  if (mulMatch && (expr.includes('multiply') || expr.includes('*') || expr.includes('into') || expr.includes('times') || expr.includes('x'))) {
+    const v1 = parseFloat(mulMatch[1]);
+    const v2 = parseFloat(mulMatch[2]);
+    return cleanNumber(v1 * v2);
+  }
+
   // 2. Word replacements
   expr = expr
     .replace(/\bplus\b|\bjama\b/g, '+')

@@ -158,8 +158,8 @@ export function normalizeTranscript(raw: string): string {
 
   let text = raw.toLowerCase().trim();
 
-  // Strip punctuation except quotes and hyphens
-  text = text.replace(/[.,/#!$%^&*;:{}=_`~?()]/g, ' ');
+  // Strip punctuation except quotes, hyphens, and math symbols (+, -, *, /, %, ^)
+  text = text.replace(/[.,#!$&;:{}?~()_]/g, ' ');
 
   // Collapse multiple spaces
   text = text.replace(/\s+/g, ' ').trim();

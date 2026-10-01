@@ -920,13 +920,13 @@ const matchTools: PatternMatcher = (text) => {
     };
   }
 
-  // Math: "calculate 15 percent of 400", "what is 25 plus 14", "multiply 5 by 6", "5 into 6"
-  const multiplyMatch = text.match(/^(?:multiply|multiply\s+karo)\s+(\d+(?:\.\d+)?)\s+(?:by|and|into|with)\s+(\d+(?:\.\d+)?)$/i);
+  // Math: "multiply 15 * 20", "multiply 15 20", "multiply 5 by 6", "15 into 20", "15 * 20"
+  const multiplyMatch = text.match(/^(?:multiply|multiply\s+karo)\s+(\d+(?:\.\d+)?)\s*(?:by|and|into|with|times|\*|x|\s)\s*(\d+(?:\.\d+)?)$/i);
   if (multiplyMatch) {
     return {
       intent: 'CALCULATE',
       slots: { expression: `${multiplyMatch[1]} * ${multiplyMatch[2]}` },
-      confidence: 0.98,
+      confidence: 0.99,
       spokenReply: 'Calculating that now, sir.',
       source: 'local',
     };
