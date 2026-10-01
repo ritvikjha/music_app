@@ -97,6 +97,18 @@ class JarvisListenerService : Service() {
         @Volatile
         var selectedWakeModel: String = "hey_jarvis"
 
+        /** Last reason why Jarvis listening was paused */
+        @Volatile
+        var lastPausedReason: String = ""
+
+        /** Timestamp when service transitioned to PAUSED_MIC_IN_USE */
+        @Volatile
+        var pausedTimestamp: Long = 0L
+
+        /** Timestamp when command capture started */
+        @Volatile
+        var lastCaptureStartTs: Long = 0L
+
         /** Callbacks set by the Expo Module bridge */
         var onWakeWordDetected: ((modelName: String, score: Float) -> Unit)? = null
         var onJarvisStateChanged: ((state: JarvisState) -> Unit)? = null
@@ -119,6 +131,8 @@ class JarvisListenerService : Service() {
 
     private var noSpeechJob: Job? = null
     private var hardCapJob: Job? = null
+    private var captureSafetyWatchdogJob: Job? = null
+    private var watchdogJob: Job? = null
 
     private var focusRequest: AudioFocusRequest? = null
     private var notificationManager: NotificationManager? = null
@@ -167,6 +181,9 @@ class JarvisListenerService : Service() {
         registerAudioRecordingObserver()
         registerPowerObserver()
         registerAmbientObservers()
+
+        // Start background resilience watchdog (auto-recovers if stuck in PAUSED_MIC_IN_USE)
+        startWatchdog()
     }
 
 
@@ -218,6 +235,8 @@ class JarvisListenerService : Service() {
 
     override fun onDestroy() {
         Log.i(TAG, "Service onDestroy — releasing all resources")
+        watchdogJob?.cancel()
+        captureSafetyWatchdogJob?.cancel()
         serviceScope.cancel()
         noSpeechJob?.cancel()
         hardCapJob?.cancel()
@@ -345,15 +364,32 @@ class JarvisListenerService : Service() {
                 val audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
                 val callback = object : AudioManager.AudioRecordingCallback() {
                     override fun onRecordingConfigChanged(configs: List<AudioRecordingConfiguration>?) {
+                        val ourSessionId = wakeWordEngine?.currentAudioSessionId ?: 0
+                        val allSessions = configs?.map { it.clientAudioSessionId } ?: emptyList()
+
+                        // Check if any external client (not our own wake-word audio session) is recording
                         val otherAppRecording = configs?.any { config ->
-                            config.clientAudioSessionId != 0
+                            val isOurSession = (ourSessionId != 0 && config.clientAudioSessionId == ourSessionId)
+                            !isOurSession && config.clientAudioSessionId != 0
                         } ?: false
 
-                        if (otherAppRecording && !isCallActive && currentState.get() == JarvisState.IDLE_LISTENING) {
-                            Log.i(TAG, "Another app claimed the microphone — pausing Jarvis")
-                            pauseListeningForMicInUse("Microphone in use by another app")
-                        } else if (!otherAppRecording && !isCallActive && currentState.get() == JarvisState.PAUSED_MIC_IN_USE) {
-                            Log.i(TAG, "Other app released microphone — resuming Jarvis")
+                        // On Android 10+ (API 29+), check if our own audio session was silenced by the OS
+                        val isOurSessionSilenced = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            configs?.any { config ->
+                                ourSessionId != 0 && config.clientAudioSessionId == ourSessionId && config.isClientSilenced
+                            } ?: false
+                        } else {
+                            false
+                        }
+
+                        Log.d(TAG, "onRecordingConfigChanged: activeSessions=$allSessions, ourSession=$ourSessionId, otherApp=$otherAppRecording, silenced=$isOurSessionSilenced, state=${currentState.get()}")
+
+                        if ((otherAppRecording || isOurSessionSilenced) && !isCallActive && currentState.get() == JarvisState.IDLE_LISTENING) {
+                            val reason = if (isOurSessionSilenced) "Microphone silenced by system" else "Microphone in use by another app"
+                            Log.i(TAG, "Another app claimed the microphone (sessions=$allSessions, our=$ourSessionId, silenced=$isOurSessionSilenced) — pausing Jarvis: $reason")
+                            pauseListeningForMicInUse(reason)
+                        } else if (!otherAppRecording && !isOurSessionSilenced && !isCallActive && currentState.get() == JarvisState.PAUSED_MIC_IN_USE) {
+                            Log.i(TAG, "External audio recording released (sessions=$allSessions) — resuming Jarvis")
                             resumeListeningAfterMicInUse()
                         }
                     }
@@ -379,6 +415,9 @@ class JarvisListenerService : Service() {
     }
 
     private fun pauseListeningForMicInUse(reason: String) {
+        lastPausedReason = reason
+        pausedTimestamp = System.currentTimeMillis()
+        Log.i(TAG, "pauseListeningForMicInUse: reason='$reason', currentState=${currentState.get()}")
         if (currentState.get() == JarvisState.PAUSED_MIC_IN_USE) return
         setState(JarvisState.PAUSED_MIC_IN_USE)
         stopWakeWordEngine()
@@ -386,12 +425,72 @@ class JarvisListenerService : Service() {
     }
 
     private fun resumeListeningAfterMicInUse() {
+        Log.i(TAG, "Attempting resumeListeningAfterMicInUse (isCallActive=$isCallActive, currentState=${currentState.get()})")
         serviceScope.launch {
-            delay(1500L) // Wait for kernel audio driver to reset
+            delay(1200L) // Wait for kernel audio driver to reset
             if (!isCallActive && currentState.get() == JarvisState.PAUSED_MIC_IN_USE) {
+                lastPausedReason = ""
+                pausedTimestamp = 0L
                 setState(JarvisState.IDLE_LISTENING)
                 updateNotification("Jarvis is listening", "Waiting for \"Hey Jarvis\"…")
-                startWakeWordEngine()
+                try {
+                    startWakeWordEngine()
+                    Log.i(TAG, "Successfully resumed wake-word engine after mic release")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to start wake-word engine during resume", e)
+                }
+            } else {
+                Log.i(TAG, "Skipping resume: isCallActive=$isCallActive, currentState=${currentState.get()}")
+            }
+        }
+    }
+
+    private fun startWatchdog() {
+        watchdogJob?.cancel()
+        watchdogJob = serviceScope.launch {
+            while (isActive) {
+                delay(4000L) // Run periodic health check every 4 seconds
+                try {
+                    val state = currentState.get()
+                    val now = System.currentTimeMillis()
+
+                    // Watchdog Check 1: Stuck in PAUSED_MIC_IN_USE for >10s without legitimate reason
+                    if (state == JarvisState.PAUSED_MIC_IN_USE && pausedTimestamp > 0 && (now - pausedTimestamp > 10000L)) {
+                        val audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+                        val configs = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                            try {
+                                audioManager?.activeRecordingConfigurations
+                            } catch (e: Exception) { null }
+                        } else null
+
+                        val ourSessionId = wakeWordEngine?.currentAudioSessionId ?: 0
+                        val externalRecording = configs?.any { config ->
+                            val isOurSession = (ourSessionId != 0 && config.clientAudioSessionId == ourSessionId)
+                            !isOurSession && config.clientAudioSessionId != 0
+                        } ?: false
+
+                        val callActive = isCallActive || (telephonyManager?.callState != TelephonyManager.CALL_STATE_IDLE)
+
+                        if (!externalRecording && !callActive) {
+                            Log.w(TAG, "⚠️ Watchdog fired: Jarvis stuck in PAUSED_MIC_IN_USE for ${(now - pausedTimestamp) / 1000}s with no call or external mic user. Forcing release-and-restart!")
+                            lastPausedReason = ""
+                            pausedTimestamp = 0L
+                            stopWakeWordEngine()
+                            delay(400L)
+                            setState(JarvisState.IDLE_LISTENING)
+                            updateNotification("Jarvis is listening", "Waiting for \"Hey Jarvis\"…")
+                            startWakeWordEngine()
+                        }
+                    }
+
+                    // Watchdog Check 2: Stuck in command capture (WAKE_DETECTED / CAPTURING / TRANSCRIBING) for >15s
+                    if (isCapturingCommand.get() && lastCaptureStartTs > 0 && (now - lastCaptureStartTs > 15000L)) {
+                        Log.w(TAG, "⚠️ Watchdog fired: Command capture stuck for >15s. Forcing cleanup and return to idle!")
+                        finishCaptureAndReturnToIdle(isError = true)
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error in Jarvis watchdog loop", e)
+                }
             }
         }
     }
@@ -618,6 +717,7 @@ class JarvisListenerService : Service() {
             return
         }
 
+        lastCaptureStartTs = System.currentTimeMillis()
         setState(JarvisState.WAKE_DETECTED)
         onWakeWordDetected?.invoke(modelName, score)
         updateNotification("Jarvis: Listening…", "Speak your command")
@@ -632,7 +732,17 @@ class JarvisListenerService : Service() {
         // 3. Release wake-word AudioRecord so SpeechRecognizer can exclusively own the mic
         stopWakeWordEngine()
 
-        // 4. Start SpeechRecognizer on the Main looper
+        // 4. Command capture safety watchdog: guarantees return to idle after at most 14s
+        captureSafetyWatchdogJob?.cancel()
+        captureSafetyWatchdogJob = serviceScope.launch {
+            delay(14000L)
+            if (isCapturingCommand.get()) {
+                Log.w(TAG, "⚠️ Command capture safety watchdog timeout after 14s — forcing return to idle")
+                finishCaptureAndReturnToIdle(isError = true)
+            }
+        }
+
+        // 5. Start SpeechRecognizer on the Main looper
         mainHandler.post {
             startSpeechRecognition()
         }
@@ -805,10 +915,14 @@ class JarvisListenerService : Service() {
     private fun finishCaptureAndReturnToIdle(isError: Boolean) {
         serviceScope.launch {
             try {
+                captureSafetyWatchdogJob?.cancel()
                 noSpeechJob?.cancel()
                 hardCapJob?.cancel()
 
                 mainHandler.post {
+                    try {
+                        speechRecognizer?.stopListening()
+                    } catch (e: Exception) {}
                     try {
                         speechRecognizer?.destroy()
                     } catch (e: Exception) {
@@ -827,20 +941,37 @@ class JarvisListenerService : Service() {
                 setState(JarvisState.COOLDOWN)
                 updateNotification("Jarvis is listening", "Waiting for \"Hey Jarvis\"…")
                 delay(700L)
+            } catch (e: Exception) {
+                Log.w(TAG, "Exception during finishCapture cleanup", e)
             } finally {
                 isCapturingCommand.set(false)
+                lastCaptureStartTs = 0L
 
-                // Return to appropriate state depending on charging mode
-                if (onlyListenWhileCharging && !isDeviceCharging()) {
-                    setState(JarvisState.PAUSED_CHARGING_ONLY)
-                    updateNotification("Jarvis: Paused (Battery Power)", "Connect charger to resume listening")
-                } else if (isCallActive) {
-                    setState(JarvisState.PAUSED_MIC_IN_USE)
-                    updateNotification("Jarvis: Paused", "Microphone in use (call active)")
-                } else {
-                    startWakeWordEngine()
+                // Return to appropriate state depending on charging mode and phone call status
+                try {
+                    if (onlyListenWhileCharging && !isDeviceCharging()) {
+                        setState(JarvisState.PAUSED_CHARGING_ONLY)
+                        updateNotification("Jarvis: Paused (Battery Power)", "Connect charger to resume listening")
+                    } else if (isCallActive) {
+                        lastPausedReason = "Microphone in use (call active)"
+                        pausedTimestamp = System.currentTimeMillis()
+                        setState(JarvisState.PAUSED_MIC_IN_USE)
+                        updateNotification("Jarvis: Paused", "Microphone in use (call active)")
+                    } else {
+                        lastPausedReason = ""
+                        pausedTimestamp = 0L
+                        setState(JarvisState.IDLE_LISTENING)
+                        updateNotification("Jarvis is listening", "Waiting for \"Hey Jarvis\"…")
+                        try {
+                            startWakeWordEngine()
+                            Log.i(TAG, "Wake-word engine resumed successfully after command capture cycle")
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to start wake-word engine during finishCapture return to idle", e)
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Unexpected error in finishCapture finally block", e)
                     setState(JarvisState.IDLE_LISTENING)
-                    updateNotification("Jarvis is listening", "Waiting for \"Hey Jarvis\"…")
                 }
             }
         }
@@ -1009,8 +1140,8 @@ class JarvisListenerService : Service() {
 
     fun speak(text: String, onDone: (() -> Unit)? = null) {
         val state = currentState.get()
-        if (state == JarvisState.CAPTURING || state == JarvisState.TRANSCRIBING || isCapturingCommand.get()) {
-            Log.w(TAG, "Speak rejected: microphone capture is active ($state)")
+        if (state == JarvisState.CAPTURING || state == JarvisState.TRANSCRIBING) {
+            Log.w(TAG, "Speak rejected: microphone capture is actively recording ($state)")
             onDone?.invoke()
             return
         }
@@ -1044,9 +1175,44 @@ class JarvisListenerService : Service() {
 
     fun updateWakeModel(modelKey: String) {
         selectedWakeModel = modelKey
-        Log.i(TAG, "Active wake word model changed to: $modelKey")
-        if (currentState.get() == JarvisState.IDLE_LISTENING) {
+        Log.i(TAG, "Active wake word model changed to: $modelKey (current state: ${currentState.get()})")
+        if (currentState.get() == JarvisState.IDLE_LISTENING || currentState.get() == JarvisState.PAUSED_MIC_IN_USE) {
+            if (currentState.get() == JarvisState.PAUSED_MIC_IN_USE && !isCallActive) {
+                Log.i(TAG, "User switched wake model while paused — resetting state to IDLE_LISTENING")
+                lastPausedReason = ""
+                pausedTimestamp = 0L
+                setState(JarvisState.IDLE_LISTENING)
+            }
             stopWakeWordEngine()
+            startWakeWordEngine()
+        }
+    }
+
+    fun forceResetListening() {
+        Log.i(TAG, "Force resetting Jarvis listener service state and audio engine")
+        lastPausedReason = ""
+        pausedTimestamp = 0L
+        isCapturingCommand.set(false)
+        lastCaptureStartTs = 0L
+        captureSafetyWatchdogJob?.cancel()
+        noSpeechJob?.cancel()
+        hardCapJob?.cancel()
+
+        mainHandler.post {
+            try {
+                speechRecognizer?.stopListening()
+            } catch (e: Exception) {}
+            try {
+                speechRecognizer?.destroy()
+            } catch (e: Exception) {}
+            speechRecognizer = null
+        }
+
+        stopWakeWordEngine()
+        serviceScope.launch {
+            delay(350L)
+            setState(JarvisState.IDLE_LISTENING)
+            updateNotification("Jarvis is listening", "Waiting for \"Hey Jarvis\"…")
             startWakeWordEngine()
         }
     }

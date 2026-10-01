@@ -345,6 +345,28 @@ export function getJarvisServiceState(): JarvisState {
 }
 
 /**
+ * Query the reason why Jarvis is currently paused (e.g. call active, another app recording).
+ */
+export function getJarvisPauseReason(): string {
+  try {
+    return JarvisWakeWordNative.getJarvisPauseReason() || '';
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Force reset the Jarvis listener service state and wake word engine.
+ */
+export function forceResetService(): void {
+  try {
+    JarvisWakeWordNative.forceResetService();
+  } catch {
+    // ignore
+  }
+}
+
+/**
  * Configure active wake word model ('hey_jarvis' or 'hello_jarvis').
  */
 export function setSelectedWakeModel(model: 'hey_jarvis' | 'hello_jarvis'): void {

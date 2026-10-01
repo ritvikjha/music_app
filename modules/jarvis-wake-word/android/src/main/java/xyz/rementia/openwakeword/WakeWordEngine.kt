@@ -42,6 +42,9 @@ class WakeWordEngine(
     val detections: Flow<WakeWordDetection> = _detections.asSharedFlow()
     val scores: Flow<WakeWordScore> = _scores.asSharedFlow()
 
+    val currentAudioSessionId: Int
+        get() = audioRecorder.currentAudioSessionId
+
     private var recordingJob: Job? = null
 
     init {

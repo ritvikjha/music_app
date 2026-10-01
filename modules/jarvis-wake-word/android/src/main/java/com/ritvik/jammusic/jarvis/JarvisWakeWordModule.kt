@@ -68,10 +68,11 @@ class JarvisWakeWordModule : Module() {
             }
 
             JarvisListenerService.onJarvisStateChanged = { state ->
-                Log.i(TAG, "Forwarding state to JS: ${state.name}")
+                Log.i(TAG, "Forwarding state to JS: ${state.name} (reason: ${JarvisListenerService.lastPausedReason})")
                 try {
                     sendEvent("onJarvisState", mapOf(
-                        "state" to state.name
+                        "state" to state.name,
+                        "reason" to JarvisListenerService.lastPausedReason
                     ))
                 } catch (e: Exception) {
                     Log.w(TAG, "Failed to send onJarvisState event to JS", e)
@@ -361,6 +362,14 @@ class JarvisWakeWordModule : Module() {
             } else {
                 "STOPPED"
             }
+        }
+
+        Function("getJarvisPauseReason") {
+            JarvisListenerService.lastPausedReason
+        }
+
+        Function("forceResetService") {
+            JarvisListenerService.instance?.forceResetListening()
         }
 
         Function("setSelectedWakeModel") { modelKey: String ->

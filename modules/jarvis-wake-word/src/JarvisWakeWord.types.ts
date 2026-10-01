@@ -32,6 +32,8 @@ export interface WakeWordDetection {
 export interface JarvisStateEvent {
   /** Current state of the Jarvis mic state machine */
   state: JarvisState;
+  /** Reason why service entered this state, if paused */
+  reason?: string;
 }
 
 export interface CommandTranscriptEvent {

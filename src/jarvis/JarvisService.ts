@@ -815,3 +815,20 @@ export function sendWhatsAppMessage(contact: string, message: string): boolean {
   return mod?.sendWhatsAppMessage ? mod.sendWhatsAppMessage(contact, message) : false;
 }
 
+/**
+ * Get the current reason why Jarvis listening is paused (if any).
+ */
+export function getJarvisPauseReason(): string {
+  const mod = getModule();
+  return mod?.getJarvisPauseReason ? mod.getJarvisPauseReason() : '';
+}
+
+/**
+ * Force reset the Jarvis listener service state and wake word engine.
+ */
+export function forceResetService(): void {
+  const mod = getModule();
+  mod?.forceResetService?.();
+}
+
+

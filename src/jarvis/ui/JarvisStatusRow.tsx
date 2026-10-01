@@ -28,6 +28,8 @@ import {
   checkBatteryOptimization,
   requestIgnoreBatteryOptimizations,
   getJarvisServiceState,
+  getJarvisPauseReason,
+  forceResetService,
 } from '../JarvisService';
 import {
   hasAudioPermission,
@@ -54,6 +56,7 @@ export const JarvisStatusRow: React.FC<JarvisStatusRowProps> = ({
   onOpenSetupGuide,
 }) => {
   const [healthStatus, setHealthStatus] = useState<HealthStatusType>('STOPPED');
+  const [pauseReason, setPauseReason] = useState<string>('');
   const [lastHeardText, setLastHeardText] = useState('Not yet today');
   const [wakeCount, setWakeCount] = useState(0);
 
@@ -61,6 +64,7 @@ export const JarvisStatusRow: React.FC<JarvisStatusRowProps> = ({
   const refreshStatus = async () => {
     if (!enabled) {
       setHealthStatus('STOPPED');
+      setPauseReason('');
       return;
     }
 
@@ -78,6 +82,9 @@ export const JarvisStatusRow: React.FC<JarvisStatusRowProps> = ({
       }
 
       const nativeState = getJarvisServiceState();
+      const currentPauseReason = getJarvisPauseReason();
+      setPauseReason(currentPauseReason);
+
       if (nativeState === 'PAUSED_MIC_IN_USE') {
         setHealthStatus('PAUSED_MIC');
       } else if (nativeState === 'PAUSED_CHARGING_ONLY') {
@@ -111,10 +118,14 @@ export const JarvisStatusRow: React.FC<JarvisStatusRowProps> = ({
     const sub = addStateListener((event) => {
       if (event.state === 'PAUSED_MIC_IN_USE') {
         setHealthStatus('PAUSED_MIC');
+        if (event.reason) {
+          setPauseReason(event.reason);
+        }
       } else if (event.state === 'PAUSED_CHARGING_ONLY') {
         setHealthStatus('PAUSED_CHARGING');
       } else if (event.state === 'IDLE_LISTENING') {
         setHealthStatus('LISTENING');
+        setPauseReason('');
       }
     });
 
@@ -130,6 +141,11 @@ export const JarvisStatusRow: React.FC<JarvisStatusRowProps> = ({
     setTimeout(refreshStatus, 1500);
   };
 
+  const handleForceRecoverMic = () => {
+    forceResetService();
+    setTimeout(refreshStatus, 800);
+  };
+
   const renderBadge = () => {
     switch (healthStatus) {
       case 'LISTENING':
@@ -140,15 +156,31 @@ export const JarvisStatusRow: React.FC<JarvisStatusRowProps> = ({
           </View>
         );
 
-      case 'PAUSED_MIC':
+      case 'PAUSED_MIC': {
+        const displayReason = pauseReason
+          ? pauseReason.toLowerCase().includes('call')
+            ? 'Paused (phone call)'
+            : pauseReason.toLowerCase().includes('silenced')
+            ? 'Paused (mic silenced)'
+            : pauseReason.toLowerCase().includes('another app')
+            ? 'Paused (other app recording)'
+            : `Paused (${pauseReason})`
+          : 'Paused (mic in use)';
+
         return (
-          <View style={[styles.badge, styles.badgePausedMic]}>
+          <TouchableOpacity
+            style={[styles.badge, styles.badgePausedMic]}
+            onPress={handleForceRecoverMic}
+            activeOpacity={0.7}
+          >
             <Ionicons name="mic-off" size={12} color="#F97316" />
             <Text style={[styles.badgeText, styles.textPausedMic]}>
-              Paused (mic in use)
+              {displayReason}
             </Text>
-          </View>
+            <Ionicons name="refresh-outline" size={11} color="#F97316" style={{ marginLeft: 3 }} />
+          </TouchableOpacity>
         );
+      }
 
       case 'PAUSED_CHARGING':
         return (

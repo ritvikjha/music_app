@@ -38,6 +38,10 @@ internal class AudioRecorder(
         ) == PackageManager.PERMISSION_GRANTED
     }
 
+    @Volatile
+    var currentAudioSessionId: Int = 0
+        private set
+
     @SuppressLint("MissingPermission")
     fun startRecording(): Flow<FloatArray> = flow {
         require(hasRecordPermission()) { "RECORD_AUDIO permission not granted" }
@@ -57,6 +61,8 @@ internal class AudioRecorder(
             throw IllegalStateException("Failed to initialize AudioRecord")
         }
 
+        currentAudioSessionId = audioRecord.audioSessionId
+
         val audioBuffer = ShortArray(BUFFER_SIZE_IN_SHORTS)
 
         try {
@@ -73,6 +79,7 @@ internal class AudioRecorder(
                 }
             }
         } finally {
+            currentAudioSessionId = 0
             if (audioRecord.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
                 audioRecord.stop()
             }
