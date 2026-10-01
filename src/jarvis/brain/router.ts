@@ -48,6 +48,27 @@ export const VALID_INTENTS: Set<IntentName> = new Set([
   'PROTOCOL_NIGHT',
   'PROTOCOL_PARTY',
   'PROTOCOL_STEALTH',
+  'PROTOCOL_MORNING',
+  'PROTOCOL_DRIVE',
+  'PROTOCOL_FOCUS',
+  // Level 2 & 3
+  'PLAY_MOOD',
+  'PLAY_MY_USUAL',
+  'REMEMBER',
+  'RECALL',
+  'SET_REMINDER',
+  // Level 4
+  'GET_WEATHER',
+  'GET_TIME',
+  'GET_DATE',
+  'WEB_SEARCH',
+  'CALCULATE',
+  'CONVERT_UNITS',
+  'CHECK_CALENDAR',
+  'CONTACT_LOOKUP',
+  // Level 5
+  'MORNING_BRIEFING',
+  'VISION_QUERY',
 ]);
 
 export interface MemoryTurn {

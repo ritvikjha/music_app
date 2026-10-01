@@ -19,6 +19,10 @@ import { getArtistSongs, getTrending, getRelatedSongs, searchSongs } from '../..
 import type { IntentResult } from '../brain/types';
 import type { Song } from '../../types';
 import { REPLIES, pickVariant, formatChatReply } from '../brain/replies';
+import { saveNote, findNote } from '../memory/notepad';
+import { recordSongPlay, recordMood, getUsualQuery } from '../memory/musicProfile';
+import { executeTool } from '../tools/toolRegistry';
+import { proactiveEngine } from '../ambient/proactiveEngine';
 
 // Optional native volume control helper
 let JarvisNativeModule: any = null;
@@ -721,6 +725,165 @@ async function executeLiveIntent(
       };
     }
 
+    case 'PROTOCOL_MORNING': {
+      let briefing = '';
+      try {
+        briefing = await proactiveEngine.triggerMorningBriefing();
+      } catch {
+        briefing = 'Good morning, sir. Systems operational.';
+      }
+      return {
+        ok: true,
+        spokenReply: briefing,
+        toast: { message: 'Morning Protocol Engaged', type: 'info' },
+      };
+    }
+
+    case 'PROTOCOL_DRIVE': {
+      try {
+        await audioPlayer.setVolume(0.7);
+      } catch {}
+      return {
+        ok: true,
+        spokenReply: intentResult.spokenReply || 'Drive protocol active. Safe travels, sir.',
+        toast: { message: 'Drive Protocol Active', type: 'info' },
+      };
+    }
+
+    case 'PROTOCOL_FOCUS': {
+      try {
+        await audioPlayer.setVolume(0.25);
+      } catch {}
+      return {
+        ok: true,
+        spokenReply: intentResult.spokenReply || 'Focus protocol active. Silencing distractions.',
+        toast: { message: 'Focus Protocol Active', type: 'info' },
+      };
+    }
+
+    case 'PLAY_MOOD': {
+      const mood = (slots?.mood || slots?.query || 'chill').trim();
+      recordMood(mood);
+      try {
+        const results = await searchSongs(`${mood} music hits`);
+        if (results && results.length > 0) {
+          const targetSong = results[0];
+          handlers.playNow(targetSong, results);
+          await handlers.playSong(targetSong);
+          handlers.setShuffle(true);
+          recordSongPlay(targetSong.title, targetSong.artist, mood);
+          return {
+            ok: true,
+            spokenReply: intentResult.spokenReply || `Playing ${mood} music for you, sir.`,
+            toast: { message: `Mood: ${mood}`, type: 'success' },
+          };
+        }
+      } catch {}
+      return {
+        ok: false,
+        spokenReply: `Couldn't find songs for ${mood} right now.`,
+      };
+    }
+
+    case 'PLAY_MY_USUAL': {
+      try {
+        const query = await getUsualQuery();
+        const results = await searchSongs(query);
+        if (results && results.length > 0) {
+          const targetSong = results[0];
+          handlers.playNow(targetSong, results);
+          await handlers.playSong(targetSong);
+          handlers.setShuffle(true);
+          recordSongPlay(targetSong.title, targetSong.artist);
+          return {
+            ok: true,
+            spokenReply: intentResult.spokenReply || `Playing your usual rotation, sir.`,
+            toast: { message: 'Playing Your Usual', type: 'success' },
+          };
+        }
+      } catch {}
+      return {
+        ok: false,
+        spokenReply: "I couldn't load your usual playlist right now, sir.",
+      };
+    }
+
+    case 'REMEMBER': {
+      const key = (slots?.key || '').trim();
+      const value = (slots?.value || '').trim();
+      if (!key || !value) {
+        return { ok: false, spokenReply: 'What would you like me to remember, sir?' };
+      }
+      await saveNote(key, value);
+      return {
+        ok: true,
+        spokenReply: intentResult.spokenReply || `Noted in permanent memory: ${key} is ${value}.`,
+        toast: { message: `Remembered: ${key}`, type: 'info' },
+      };
+    }
+
+    case 'RECALL': {
+      const query = (slots?.query || '').trim();
+      if (!query) {
+        return { ok: false, spokenReply: 'What would you like me to look up, sir?' };
+      }
+      const note = await findNote(query);
+      if (note) {
+        const replyFn = pickVariant(REPLIES.RECALL_FOUND);
+        return {
+          ok: true,
+          spokenReply: replyFn(note.key, note.value),
+          toast: { message: `${note.key}: ${note.value}`, type: 'info' },
+        };
+      }
+      return {
+        ok: true,
+        spokenReply: pickVariant(REPLIES.RECALL_NOT_FOUND),
+        toast: { message: `No note found for "${query}"`, type: 'info' },
+      };
+    }
+
+    case 'SET_REMINDER': {
+      const task = (slots?.task || '').trim();
+      if (!task) {
+        return { ok: false, spokenReply: 'What should I remind you about, sir?' };
+      }
+      await saveNote(`reminder_${Date.now()}`, task);
+      return {
+        ok: true,
+        spokenReply: intentResult.spokenReply || `Reminder set for ${task}, sir.`,
+        toast: { message: `Reminder: ${task}`, type: 'info' },
+      };
+    }
+
+    case 'GET_WEATHER':
+    case 'GET_TIME':
+    case 'GET_DATE':
+    case 'CALCULATE':
+    case 'CONVERT_UNITS':
+    case 'WEB_SEARCH': {
+      const toolRes = await executeTool(intent, slots || {});
+      return {
+        ok: true,
+        spokenReply: toolRes.spokenReply,
+        toast: { message: intent.replace(/_/g, ' '), type: 'info' },
+      };
+    }
+
+    case 'MORNING_BRIEFING': {
+      let briefing = '';
+      try {
+        briefing = await proactiveEngine.triggerMorningBriefing();
+      } catch {
+        briefing = 'Good morning, sir. Systems operational.';
+      }
+      return {
+        ok: true,
+        spokenReply: briefing,
+        toast: { message: 'Morning Briefing', type: 'info' },
+      };
+    }
+
     case 'CHAT': {
 
 
@@ -997,6 +1160,85 @@ async function executeFallbackIntent(intentResult: IntentResult): Promise<Action
         ok: true,
         spokenReply: intentResult.spokenReply || 'Stealth mode engaged. Audio muted.',
       };
+    }
+
+    case 'PROTOCOL_MORNING': {
+      let briefing = '';
+      try {
+        briefing = await proactiveEngine.triggerMorningBriefing();
+      } catch {
+        briefing = 'Good morning, sir. Systems operational.';
+      }
+      return { ok: true, spokenReply: briefing };
+    }
+
+    case 'PROTOCOL_DRIVE': {
+      try {
+        await audioPlayer.setVolume(0.7);
+      } catch {}
+      return { ok: true, spokenReply: intentResult.spokenReply || 'Drive protocol active. Safe travels, sir.' };
+    }
+
+    case 'PROTOCOL_FOCUS': {
+      try {
+        await audioPlayer.setVolume(0.25);
+      } catch {}
+      return { ok: true, spokenReply: intentResult.spokenReply || 'Focus protocol active. Silencing distractions.' };
+    }
+
+    case 'REMEMBER': {
+      const key = (slots?.key || '').trim();
+      const value = (slots?.value || '').trim();
+      if (!key || !value) {
+        return { ok: false, spokenReply: 'What would you like me to remember, sir?' };
+      }
+      await saveNote(key, value);
+      return {
+        ok: true,
+        spokenReply: intentResult.spokenReply || `Saved to memory: ${key} is ${value}.`,
+      };
+    }
+
+    case 'RECALL': {
+      const query = (slots?.query || '').trim();
+      if (!query) {
+        return { ok: false, spokenReply: 'What would you like me to look up, sir?' };
+      }
+      const note = await findNote(query);
+      if (note) {
+        const replyFn = pickVariant(REPLIES.RECALL_FOUND);
+        return { ok: true, spokenReply: replyFn(note.key, note.value) };
+      }
+      return { ok: true, spokenReply: pickVariant(REPLIES.RECALL_NOT_FOUND) };
+    }
+
+    case 'SET_REMINDER': {
+      const task = (slots?.task || '').trim();
+      if (!task) {
+        return { ok: false, spokenReply: 'What should I remind you about, sir?' };
+      }
+      await saveNote(`reminder_${Date.now()}`, task);
+      return { ok: true, spokenReply: intentResult.spokenReply || `Reminder set for ${task}, sir.` };
+    }
+
+    case 'GET_WEATHER':
+    case 'GET_TIME':
+    case 'GET_DATE':
+    case 'CALCULATE':
+    case 'CONVERT_UNITS':
+    case 'WEB_SEARCH': {
+      const toolRes = await executeTool(intent, slots || {});
+      return { ok: true, spokenReply: toolRes.spokenReply };
+    }
+
+    case 'MORNING_BRIEFING': {
+      let briefing = '';
+      try {
+        briefing = await proactiveEngine.triggerMorningBriefing();
+      } catch {
+        briefing = 'Good morning, sir. Systems operational.';
+      }
+      return { ok: true, spokenReply: briefing };
     }
 
     case 'CHAT': {

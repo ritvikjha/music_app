@@ -25,6 +25,11 @@ import { executeIntent, type ActionResult } from './actions/executor';
 import { getLiveHandlers } from './actions/registry';
 import { REPLIES, pickVariant } from './brain/replies';
 import { logJarvisEvent, recordWakeHit } from './eventLogger';
+import { getAllNotes } from './memory/notepad';
+import { getMusicProfile } from './memory/musicProfile';
+import { appendConversationTurn } from './memory/conversationHistory';
+import { getTimeOfDay } from './tools/timeDateTool';
+import { proactiveEngine } from './ambient/proactiveEngine';
 import type { Song } from '../types';
 import type {
   JarvisState,
@@ -231,6 +236,15 @@ export async function startJarvis(callbacks: JarvisCallbacks = {}): Promise<bool
     const wakeModel = await getSelectedWakeModel();
     mod.setSelectedWakeModel(wakeModel);
 
+    // Register proactive speaker for ambient briefings and alerts
+    proactiveEngine.registerSpeaker(async (text: string) => {
+      try {
+        await mod?.speak(text);
+      } catch (err) {
+        console.warn('[Jarvis Ambient] Failed to speak ambient event:', err);
+      }
+    });
+
     // 1. Wake word detection listener
     wakeWordSub = mod.addWakeWordListener(async (event: WakeWordDetection) => {
       lastWakeTime = Date.now();
@@ -361,11 +375,20 @@ export async function startJarvis(callbacks: JarvisCallbacks = {}): Promise<bool
 
         // Stage 3: Router
         const routerStart = Date.now();
+        const notes = await getAllNotes();
+        const musicProf = await getMusicProfile();
+        const timeOfDay = getTimeOfDay();
+        const dayOfWeek = new Date().toLocaleDateString('en-US', { weekday: 'long' });
+
         const intentResult = await routeTranscript(event.text, {
           currentSongTitle: currentSong?.title || (audioPlayer as any).currentMetadata?.title,
           currentSongArtist: currentSong?.artist || (audioPlayer as any).currentMetadata?.artist,
           isPlaying,
           queueLength: queue.length,
+          userNotes: notes.slice(0, 5),
+          musicProfile: musicProf,
+          timeOfDay,
+          dayOfWeek,
         });
         const routerTime = Date.now();
         const transcriptToIntentMs = routerTime - routerStart;
@@ -385,6 +408,12 @@ export async function startJarvis(callbacks: JarvisCallbacks = {}): Promise<bool
         console.log(`[Jarvis Pipeline] ⏱️ 3/3 Intent -> Action: ${intentToActionMs}ms (ok: ${actionResult.ok})`);
         console.log(`[Jarvis Pipeline] 🚀 TOTAL PIPELINE LATENCY: ${totalPipelineMs}ms (wake -> action)`);
         logJarvisEvent('ACTION', `Action: ${intentResult.intent}`, { success: actionResult.ok, latencyMs: totalPipelineMs });
+
+        // Record turns to persistent conversation history
+        appendConversationTurn({ role: 'user', text: event.text }).catch(() => {});
+        if (actionResult.spokenReply) {
+          appendConversationTurn({ role: 'assistant', text: actionResult.spokenReply }).catch(() => {});
+        }
 
         registeredCallbacks.onActionResult?.(actionResult);
 

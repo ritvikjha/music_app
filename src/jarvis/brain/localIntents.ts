@@ -749,6 +749,215 @@ const matchStarkProtocols: PatternMatcher = (text) => {
     };
   }
 
+  if (/^(?:protocol\s+morning|morning\s+protocol|wake\s+up\s+mode|start\s+my\s+day)$/i.test(text)) {
+    return {
+      intent: 'PROTOCOL_MORNING',
+      slots: {},
+      confidence: 0.98,
+      spokenReply: pickVariant(REPLIES.PROTOCOL_MORNING),
+      source: 'local',
+    };
+  }
+
+  if (/^(?:protocol\s+drive|drive\s+protocol|driving\s+mode|car\s+mode|gaadi\s+mode)$/i.test(text)) {
+    return {
+      intent: 'PROTOCOL_DRIVE',
+      slots: {},
+      confidence: 0.98,
+      spokenReply: pickVariant(REPLIES.PROTOCOL_DRIVE),
+      source: 'local',
+    };
+  }
+
+  if (/^(?:protocol\s+focus|focus\s+protocol|deep\s+work\s+mode|focus\s+mode|study\s+mode)$/i.test(text)) {
+    return {
+      intent: 'PROTOCOL_FOCUS',
+      slots: {},
+      confidence: 0.98,
+      spokenReply: pickVariant(REPLIES.PROTOCOL_FOCUS),
+      source: 'local',
+    };
+  }
+
+  return null;
+};
+
+// ==========================================
+// Level 2 & 3: Mood, Taste & Memory Matchers
+// ==========================================
+
+const matchMoodMusic: PatternMatcher = (text) => {
+  const moodMatch = text.match(
+    /^(?:play\s+something|play\s+some|play|chalao|bajao)\s+(chill|relaxing|upbeat|party|workout|gym|sad|happy|romantic|study|focus|ambient|driving|acoustic|lofi)(?:\s+(?:music|songs|vibes|tracks|gaane))?$/i
+  );
+  if (moodMatch) {
+    const mood = moodMatch[1].toLowerCase();
+    const replyFn = pickVariant(REPLIES.PLAY_MOOD);
+    return {
+      intent: 'PLAY_MOOD',
+      slots: { mood, query: `${mood} music` },
+      confidence: 0.95,
+      spokenReply: replyFn(mood),
+      source: 'local',
+    };
+  }
+  return null;
+};
+
+const matchPersonalizedUsual: PatternMatcher = (text) => {
+  if (
+    /^(?:play\s+my\s+usual|play\s+my\s+favorites?|play\s+my\s+music|mera\s+favourite\s+gaana\s+chalao|mera\s+usual\s+chalao|regular\s+chalao)$/i.test(
+      text
+    )
+  ) {
+    return {
+      intent: 'PLAY_MY_USUAL',
+      slots: {},
+      confidence: 0.96,
+      spokenReply: pickVariant(REPLIES.PLAY_MY_USUAL),
+      source: 'local',
+    };
+  }
+  return null;
+};
+
+const matchMemory: PatternMatcher = (text) => {
+  // 1. Remember: "remember that my car is at level 3" / "remember my wifi password is 1234"
+  const rememberMatch = text.match(
+    /^(?:remember\s+(?:that\s+)?|note\s+down\s+(?:that\s+)?|yaad\s+rakhna\s+(?:ki\s+)?)(.+?)\s+(?:is|hai|=|was)\s+(.+)$/i
+  );
+  if (rememberMatch) {
+    const key = rememberMatch[1].trim();
+    const value = rememberMatch[2].trim();
+    const replyFn = pickVariant(REPLIES.REMEMBER);
+    return {
+      intent: 'REMEMBER',
+      slots: { key, value },
+      confidence: 0.96,
+      spokenReply: replyFn(key),
+      source: 'local',
+    };
+  }
+
+  // 2. Recall: "what is my wifi password" / "where did i park my car" / "recall parking"
+  const recallMatch = text.match(
+    /^(?:what\s+is\s+my|where\s+is\s+my|where\s+did\s+i\s+put\s+my|where\s+did\s+i\s+park\s+my|recall|check\s+memory\s+for|mera\s+(.+)\s+kya\s+hai|meri\s+(.+)\s+kahan\s+hai)\s*(.*)$/i
+  );
+  if (recallMatch) {
+    const query = (recallMatch[1] || recallMatch[2] || recallMatch[3] || '').trim();
+    if (query && !query.includes('song') && !query.includes('playing')) {
+      return {
+        intent: 'RECALL',
+        slots: { query },
+        confidence: 0.93,
+        spokenReply: `Checking my records for ${query}, sir.`,
+        source: 'local',
+      };
+    }
+  }
+
+  // 3. Reminders: "remind me to call Mom at 5pm" / "remind me to take medicine"
+  const reminderMatch = text.match(/^(?:remind\s+me\s+to|mujhe\s+remind\s+karna\s+ki)\s+(.+)$/i);
+  if (reminderMatch) {
+    const task = reminderMatch[1].trim();
+    const replyFn = pickVariant(REPLIES.SET_REMINDER);
+    return {
+      intent: 'SET_REMINDER',
+      slots: { task },
+      confidence: 0.94,
+      spokenReply: replyFn(task),
+      source: 'local',
+    };
+  }
+
+  return null;
+};
+
+// ==========================================
+// Level 4: Tools Matchers (Offline / Local)
+// ==========================================
+
+const matchTools: PatternMatcher = (text) => {
+  // Weather
+  const weatherMatch = text.match(/^(?:what\s+is\s+the\s+weather|weather\s+report|how\s+is\s+the\s+weather|weather\s+kaisa\s+hai|mausam\s+kaisa\s+hai)(?:\s+(?:in|for|at)\s+(.+))?$/i);
+  if (weatherMatch) {
+    const location = (weatherMatch[1] || '').trim();
+    return {
+      intent: 'GET_WEATHER',
+      slots: { location: location || undefined },
+      confidence: 0.95,
+      spokenReply: location ? `Fetching weather for ${location}, sir.` : 'Checking the weather report, sir.',
+      source: 'local',
+    };
+  }
+
+  // Time
+  if (/^(?:what\s+time\s+is\s+it|what's\s+the\s+time|current\s+time|time\s+kya\s+hua\s+hai|kitne\s+baje\s+hain)$/i.test(text)) {
+    return {
+      intent: 'GET_TIME',
+      slots: {},
+      confidence: 0.98,
+      spokenReply: 'Checking current time, sir.',
+      source: 'local',
+    };
+  }
+
+  // Date
+  if (/^(?:what\s+is\s+today's\s+date|what's\s+the\s+date|current\s+date|today's\s+date|aaj\s+kya\s+taarikh\s+hai|aaj\s+ki\s+date)$/i.test(text)) {
+    return {
+      intent: 'GET_DATE',
+      slots: {},
+      confidence: 0.98,
+      spokenReply: "Checking today's date, sir.",
+      source: 'local',
+    };
+  }
+
+  // Math: "calculate 15 percent of 400" or "what is 25 plus 14"
+  const mathMatch = text.match(/^(?:calculate|what\s+is)\s+(\d+.*)$/i);
+  if (mathMatch && /[\d+\-*/%]|percent|plus|minus|times|divided/i.test(mathMatch[1])) {
+    return {
+      intent: 'CALCULATE',
+      slots: { expression: mathMatch[1].trim() },
+      confidence: 0.95,
+      spokenReply: 'Calculating that now, sir.',
+      source: 'local',
+    };
+  }
+
+  // Search
+  const searchMatch = text.match(/^(?:search\s+for|web\s+search|look\s+up|google\s+for)\s+(.+)$/i);
+  if (searchMatch) {
+    return {
+      intent: 'WEB_SEARCH',
+      slots: { query: searchMatch[1].trim() },
+      confidence: 0.92,
+      spokenReply: `Searching for ${searchMatch[1].trim()}, sir.`,
+      source: 'local',
+    };
+  }
+
+  return null;
+};
+
+// ==========================================
+// Level 5: Ambient & Morning Briefing
+// ==========================================
+
+const matchMorningBriefing: PatternMatcher = (text) => {
+  if (
+    /^(?:morning\s+briefing|daily\s+briefing|give\s+me\s+a\s+morning\s+briefing|aaj\s+ka\s+briefing|briefing\s+do)$/i.test(
+      text
+    )
+  ) {
+    return {
+      intent: 'MORNING_BRIEFING',
+      slots: {},
+      confidence: 0.97,
+      spokenReply: 'Preparing your morning briefing, sir.',
+      source: 'local',
+    };
+  }
   return null;
 };
 
@@ -769,8 +978,11 @@ const matchStatusReport: PatternMatcher = (text) => {
 const MATCHERS: PatternMatcher[] = [
   matchStarkEasterEggs,
   matchStarkProtocols,
+  matchMorningBriefing,
   matchStatusReport,
   matchWhatsAppMessage,
+  matchMemory,
+  matchTools,
   matchPause,
   matchResume,
   matchNext,
@@ -785,6 +997,8 @@ const MATCHERS: PatternMatcher[] = [
   matchRepeat,
   matchSleepTimer,
   matchTrackInfo,
+  matchMoodMusic,
+  matchPersonalizedUsual,
   matchDiscovery,
   matchQueue,
   matchLeaveRoom,

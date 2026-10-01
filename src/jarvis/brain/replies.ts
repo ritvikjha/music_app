@@ -319,5 +319,83 @@ export const REPLIES = {
     'Silent running protocol active, sir.',
     'Stealth mode online. Discretion guaranteed.',
   ],
+
+  PROTOCOL_MORNING: [
+    'Good morning, sir. Systems calibrated, briefing prepared.',
+    'Morning protocol engaged. Have a productive day, sir.',
+    'Systems online for the day ahead, sir.',
+  ],
+
+  PROTOCOL_DRIVE: [
+    'Drive protocol active. Safe travels, sir.',
+    'Navigation and driving audio engaged.',
+    'Road protocol online. Keeping you focused, sir.',
+  ],
+
+  PROTOCOL_FOCUS: [
+    'Focus protocol engaged. Silencing distractions.',
+    'Do not disturb active. Entering deep work mode, sir.',
+    'Focus mode online. Maximizing efficiency, sir.',
+  ],
+
+  // Mood Music (Level 2)
+  PLAY_MOOD: [
+    (mood: string) => `Queuing up some ${mood} vibes for you.`,
+    (mood: string) => `Finding the perfect ${mood} tracks, sir.`,
+    (mood: string) => `Setting the mood with ${mood} music.`,
+  ],
+
+  // Personalized Taste (Level 3)
+  PLAY_MY_USUAL: [
+    'Putting on your favorites, sir.',
+    'Playing your usual rotation.',
+    'Right away, sir. Your signature mix coming up.',
+  ],
+
+  // Memory & Reminders (Level 3)
+  REMEMBER: [
+    (key: string) => `Got it, sir. I'll remember that ${key}.`,
+    (key: string) => `Noted in permanent memory: ${key}.`,
+    (key: string) => `Stored to memory, sir.`,
+  ],
+
+  RECALL_FOUND: [
+    (key: string, value: string) => `According to my notes, your ${key} is ${value}.`,
+    (key: string, value: string) => `You noted that ${key}: ${value}, sir.`,
+    (key: string, value: string) => `Here is what I have for ${key}: ${value}.`,
+  ],
+
+  RECALL_NOT_FOUND: [
+    "I don't seem to have a record of that in my memory banks, sir.",
+    "My memory files have no note regarding that, sir.",
+    "I haven't been told about that yet, sir.",
+  ],
+
+  SET_REMINDER: [
+    (task: string) => `Reminder set for ${task}, sir.`,
+    (task: string) => `Noted. I'll remind you to ${task}.`,
+    (task: string) => `Scheduled reminder: ${task}.`,
+  ],
+
+  // Tools (Level 4)
+  CALCULATE: [
+    (result: string | number) => `The answer is ${result}, sir.`,
+    (result: string | number) => `Calculated: ${result}.`,
+  ],
+
+  CONVERT_UNITS: [
+    (result: string) => `${result}, sir.`,
+    (result: string) => `That converts to ${result}.`,
+  ],
+
+  WEATHER: [
+    (summary: string) => `${summary}, sir.`,
+    (summary: string) => `Current weather: ${summary}.`,
+  ],
+
+  // Ambient & Briefing (Level 5)
+  MORNING_BRIEFING: [
+    (briefing: string) => briefing,
+  ],
 };
 

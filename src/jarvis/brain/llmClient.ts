@@ -49,6 +49,13 @@ export async function queryLlmBrain(
     queueLength: context?.queueLength ?? 0,
     history: recentHistory,
     deviceId: context?.deviceId || 'jam-mobile-client',
+    userNotes: context?.userNotes || [],
+    musicProfile: context?.musicProfile || null,
+    timeOfDay: context?.timeOfDay,
+    dayOfWeek: context?.dayOfWeek,
+    batteryPercent: context?.batteryPercent,
+    isCharging: context?.isCharging,
+    networkType: context?.networkType,
   };
 
   const controller = new AbortController();

@@ -55,14 +55,17 @@ setInterval(() => {
   }
 }, 300000);
 
-const JARVIS_SYSTEM_PROMPT = `You are the natural language intent parser for a music app named Jam.
-Analyze the user's transcript and conversation context, then map it into an intent JSON object.
+const JARVIS_SYSTEM_PROMPT = `You are J.A.R.V.I.S., a highly intelligent, calm, sophisticated AI assistant (inspired by Tony Stark's assistant).
+Your personality: polite, articulate, dry British wit, loyal, concise (maximum 2 sentences per spokenReply). Address the user occasionally as "sir" or by context.
+Analyze the user's transcript, conversation context, personal memory, and device state, then map it into a structured intent JSON object.
 
 Allowed IntentNames:
 - PLAY_SONG: slots: { query: string, artist?: string }
 - PLAY_ARTIST: slots: { artist: string }
 - PLAY_TRENDING: slots: {}
 - PLAY_SIMILAR: slots: {}
+- PLAY_MOOD: slots: { mood: string, query?: string } (e.g., "play something relaxing for sleep", "upbeat gym workout vibes")
+- PLAY_MY_USUAL: slots: {} (plays the user's learned favorite genre or vibe)
 - PAUSE: slots: {}
 - RESUME: slots: {}
 - NEXT: slots: {}
@@ -82,15 +85,36 @@ Allowed IntentNames:
 - WHAT_IS_PLAYING: slots: {}
 - OPEN_SCREEN: slots: { screen: "home" | "library" | "jam" | "games" | "profile" | "player" | "friends" }
 - CLEAR_QUEUE: slots: {}, needsConfirmation: true
-- CHAT: slots: { reply: string } (for general knowledge, trivia, greeting, or small talk)
-- UNKNOWN: slots: {}
+- LEAVE_ROOM: slots: {}
+- STATUS_REPORT: slots: {}
+- PROTOCOL_NIGHT: slots: {}
+- PROTOCOL_PARTY: slots: {}
+- PROTOCOL_STEALTH: slots: {}
+- PROTOCOL_MORNING: slots: {}
+- PROTOCOL_DRIVE: slots: {}
+- PROTOCOL_FOCUS: slots: {}
+- REMEMBER: slots: { key: string, value: string } (stores facts, e.g. "remember my car parking is spot B4" -> key: "car parking", value: "spot B4")
+- RECALL: slots: { query: string } (retrieves saved facts, e.g. "where did I park my car?")
+- SET_REMINDER: slots: { task: string, time?: string }
+- GET_WEATHER: slots: { location?: string }
+- GET_TIME: slots: { timezone?: string }
+- GET_DATE: slots: {}
+- WEB_SEARCH: slots: { query: string }
+- CALCULATE: slots: { expression: string }
+- CONVERT_UNITS: slots: { value: number, from: string, to: string }
+- CHECK_CALENDAR: slots: {}
+- CONTACT_LOOKUP: slots: { name: string }
+- MORNING_BRIEFING: slots: {}
+- VISION_QUERY: slots: { question?: string }
+- CHAT: slots: { reply: string } (for general questions, science, trivia, conversation, greetings; reply must be witty and under 2 sentences)
+- UNKNOWN: slots: { raw: string }
 
 Return ONLY valid JSON matching this schema:
 {
   "intent": "<IntentName>",
   "slots": { ... },
   "confidence": <number between 0.0 and 1.0>,
-  "spokenReply": "<concise, natural spoken reply for the user>",
+  "spokenReply": "<concise, natural spoken reply for the user, max 2 sentences>",
   "needsConfirmation": <boolean, optional>,
   "source": "llm"
 }`;
@@ -180,7 +204,21 @@ app.post('/jarvis/brain', async (req, res) => {
     return res.status(429).json({ error: 'Rate limit exceeded (30 req/min)' });
   }
 
-  const { transcript, currentSongTitle, currentSongArtist, isPlaying, queueLength, history } = req.body || {};
+  const {
+    transcript,
+    currentSongTitle,
+    currentSongArtist,
+    isPlaying,
+    queueLength,
+    history,
+    userNotes,
+    musicProfile,
+    timeOfDay,
+    dayOfWeek,
+    batteryPercent,
+    isCharging,
+    networkType
+  } = req.body || {};
   if (!transcript || typeof transcript !== 'string') {
     return res.status(400).json({ error: 'Missing transcript' });
   }
@@ -191,6 +229,11 @@ Context:
 - Playing: ${isPlaying ? 'yes' : 'no'}
 - Queue length: ${queueLength || 0}
 - Recent history: ${JSON.stringify(history || [])}
+- Time of day: ${timeOfDay || 'unknown'}, Day: ${dayOfWeek || 'unknown'}
+- Device Battery: ${batteryPercent !== undefined ? batteryPercent + '%' : 'unknown'} (Charging: ${isCharging ? 'yes' : 'no'})
+- Network: ${networkType || 'unknown'}
+- User Memory/Notes: ${userNotes && userNotes.length > 0 ? JSON.stringify(userNotes) : 'None'}
+- User Music Profile: ${musicProfile ? JSON.stringify(musicProfile) : 'None'}
 
 Map this to the appropriate intent schema in JSON.`;
 
