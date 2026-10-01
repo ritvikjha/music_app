@@ -164,6 +164,11 @@ export function normalizeTranscript(raw: string): string {
   // Collapse multiple spaces
   text = text.replace(/\s+/g, ' ').trim();
 
+  // If the utterance is solely a greeting or callsign, preserve it!
+  if (/^(?:hey|hay|he|hello|hlo|hi|yo|namaste|pranam|suno|sun|jarvis)(?:\s+(?:jarvis|bro|bhai|buddy|there))?$/i.test(text)) {
+    return text;
+  }
+
   // Strip common conversational filler prefixes/suffixes
   let changed = true;
   while (changed) {
@@ -174,6 +179,11 @@ export function normalizeTranscript(raw: string): string {
         changed = true;
       }
     }
+  }
+
+  // If stripping fillers emptied the text but the original was a greeting, restore greeting
+  if (!text && /^(?:hey|hay|he|hello|hlo|hi|yo|namaste|pranam|suno|sun|jarvis)/i.test(raw.trim())) {
+    return 'hey jarvis';
   }
 
   // Apply ASR phonetic slip corrections

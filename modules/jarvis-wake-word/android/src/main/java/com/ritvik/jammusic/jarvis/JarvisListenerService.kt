@@ -137,6 +137,7 @@ class JarvisListenerService : Service() {
     private val hasStartedSpeaking = AtomicBoolean(false)
     private var latestTranscript: String = ""
     private var wakeDetectedTs: Long = 0L
+    private var lastWakeModelName: String = ""
     private var hasRetriedCapture = false
 
     private var noSpeechJob: Job? = null
@@ -568,6 +569,14 @@ class JarvisListenerService : Service() {
                         Log.w(TAG, "⚠️ Watchdog fired: Command capture stuck for >15s. Forcing cleanup and return to idle!")
                         finishCaptureAndReturnToIdle(isError = true)
                     }
+
+                    // Watchdog Check 3: In IDLE_LISTENING but wakeWordEngine is null or stopped
+                    if (state == JarvisState.IDLE_LISTENING && !isCapturingCommand.get() && (wakeWordEngine == null || wakeWordEngine?.isRunning != true)) {
+                        Log.w(TAG, "⚠️ Watchdog fired: IDLE_LISTENING but WakeWordEngine is not running! Reviving wake-word engine…")
+                        stopWakeWordEngine()
+                        delay(250L)
+                        startWakeWordEngine()
+                    }
                 } catch (e: Exception) {
                     Log.w(TAG, "Error in Jarvis watchdog loop", e)
                 }
@@ -719,7 +728,11 @@ class JarvisListenerService : Service() {
     // ==========================================
 
     private fun startWakeWordEngine() {
-        if (wakeWordEngine != null) return
+        if (wakeWordEngine != null) {
+            if (wakeWordEngine?.isRunning == true) return
+            Log.w(TAG, "wakeWordEngine instance exists but is not running — releasing stale instance")
+            stopWakeWordEngine()
+        }
         if (isCapturingCommand.get()) {
             Log.w(TAG, "Refusing startWakeWordEngine: command capture is active")
             return
@@ -730,19 +743,25 @@ class JarvisListenerService : Service() {
         }
 
         val models = mutableListOf<WakeWordModel>()
+        // Acoustic calibration: "Hey" is a single short syllable evaluated by hey_jarvis.onnx.
+        // Its activation peaks around 0.12 - 0.18, so 0.14f ensures immediate activation on "Hey".
+        // "Hey Jarvis" and "Hello Jarvis" remain at full benchmark threshold (0.50) so "hello" alone never triggers.
+        val heyThreshold = (wakeWordThreshold * 0.28f).coerceIn(0.12f, 0.16f)
+
         when (selectedWakeModel) {
             "hello_jarvis" -> {
                 models.add(WakeWordModel("Hello Jarvis", "hello_jarvis.onnx", threshold = wakeWordThreshold))
+                models.add(WakeWordModel("Hey", "hey_jarvis.onnx", threshold = heyThreshold))
             }
             "hey_jarvis" -> {
                 models.add(WakeWordModel("Hey Jarvis", "hey_jarvis.onnx", threshold = wakeWordThreshold))
-                models.add(WakeWordModel("Hey", "hey_jarvis.onnx", threshold = (wakeWordThreshold * 0.60f).coerceAtLeast(0.22f)))
+                models.add(WakeWordModel("Hey", "hey_jarvis.onnx", threshold = heyThreshold))
             }
             else -> {
                 // "both" / default: load models so "Hey Jarvis", "Hello Jarvis", and "Hey" all wake Jarvis!
                 models.add(WakeWordModel("Hey Jarvis", "hey_jarvis.onnx", threshold = wakeWordThreshold))
                 models.add(WakeWordModel("Hello Jarvis", "hello_jarvis.onnx", threshold = wakeWordThreshold))
-                models.add(WakeWordModel("Hey", "hey_jarvis.onnx", threshold = (wakeWordThreshold * 0.60f).coerceAtLeast(0.22f)))
+                models.add(WakeWordModel("Hey", "hey_jarvis.onnx", threshold = heyThreshold))
             }
         }
 
@@ -809,6 +828,7 @@ class JarvisListenerService : Service() {
         }
 
         wakeDetectedTs = System.currentTimeMillis()
+        lastWakeModelName = modelName
         hasRetriedCapture = false
         logTimeline("WAKE_DETECTED", mapOf("model" to modelName, "score" to score.toDouble()))
 
@@ -1004,17 +1024,36 @@ class JarvisListenerService : Service() {
                         return
                     }
 
-                    // Step 2e: If NO_MATCH or SPEECH_TIMEOUT before speech started, auto-retry ONCE
+                    // Step 2e: If NO_MATCH or SPEECH_TIMEOUT before speech started:
+                    // If user triggered wake word ("Hey", "Hey Jarvis", "Hello Jarvis") to get attention and paused,
+                    // Jarvis replies verbally with greeting acknowledgment and continues listening for the command.
                     val isNoSpeechOrNoMatch = (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT)
                     if (isNoSpeechOrNoMatch && !speechStarted && !hasRetriedCapture && isCapturingCommand.get()) {
                         hasRetriedCapture = true
-                        logTimeline("AUTO_RETRY_INITIATED", mapOf("previous_error" to errorName))
-                        Log.i(TAG, "STT failed before speech started ($errorName) — auto-retrying ONCE with prompt cue")
+                        logTimeline("AUTO_RETRY_INITIATED", mapOf("previous_error" to errorName, "wake_model" to lastWakeModelName))
+                        Log.i(TAG, "STT silence timeout after wake word '$lastWakeModelName' — replying with greeting acknowledgment")
                         playEarcon(ToneGenerator.TONE_PROP_PROMPT, 100)
-                        ttsHelper?.speak("I didn't catch that", null)
+
+                        val isGreetingWake = lastWakeModelName.contains("Hey", ignoreCase = true) ||
+                                             lastWakeModelName.contains("Hello", ignoreCase = true) ||
+                                             lastWakeModelName.contains("Jarvis", ignoreCase = true)
+
+                        val ackText = if (isGreetingWake) {
+                            val replies = listOf(
+                                "At your service, sir. What can I do for you?",
+                                "Yes boss, listening.",
+                                "Online and ready, sir.",
+                                "Haanji sir, boliye kya kaam hai?"
+                            )
+                            replies.random()
+                        } else {
+                            "I didn't catch that"
+                        }
+
+                        ttsHelper?.speak(ackText, null)
 
                         serviceScope.launch {
-                            delay(1300L) // Wait for prompt cue
+                            delay(2200L) // Wait for greeting speech before reopening recognizer
                             if (isCapturingCommand.get()) {
                                 mainHandler.post {
                                     startSpeechRecognition(silenceTimeoutMs = 6000L)
@@ -1159,8 +1198,8 @@ class JarvisListenerService : Service() {
                 abandonTransientAudioFocus()
                 setState(JarvisState.COOLDOWN)
                 updateNotification("Jarvis is listening", "Waiting for \"Hey Jarvis\"…")
-                // Prompt instruction: skip the ~700ms cooldown, brief 200ms for audio tracks to settle
-                delay(200L)
+                // Prompt instruction: allow 400ms for OS audio server and speech recognizer to fully release hardware mic
+                delay(400L)
             } catch (e: Exception) {
                 Log.w(TAG, "Exception during finishCapture cleanup", e)
             } finally {

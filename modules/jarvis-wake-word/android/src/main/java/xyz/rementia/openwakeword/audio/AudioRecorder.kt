@@ -49,27 +49,37 @@ internal class AudioRecorder(
         val minBufferSize = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT)
         val bufferSize = maxOf(minBufferSize, BUFFER_SIZE_IN_SHORTS * 2)
 
-        val audioRecord = AudioRecord(
-            MediaRecorder.AudioSource.MIC,
-            SAMPLE_RATE,
-            CHANNEL_CONFIG,
-            AUDIO_FORMAT,
-            bufferSize
-        )
-
-        if (audioRecord.state != AudioRecord.STATE_INITIALIZED) {
-            throw IllegalStateException("Failed to initialize AudioRecord")
+        var audioRecord: AudioRecord? = null
+        var attempts = 0
+        while (attempts < 5 && coroutineContext.isActive) {
+            val record = AudioRecord(
+                MediaRecorder.AudioSource.MIC,
+                SAMPLE_RATE,
+                CHANNEL_CONFIG,
+                AUDIO_FORMAT,
+                bufferSize
+            )
+            if (record.state == AudioRecord.STATE_INITIALIZED) {
+                audioRecord = record
+                break
+            }
+            record.release()
+            attempts++
+            android.util.Log.w("AudioRecorder", "AudioRecord not initialized (attempt $attempts/5). Waiting 200ms for hardware mic release...")
+            kotlinx.coroutines.delay(200L)
         }
 
-        currentAudioSessionId = audioRecord.audioSessionId
+        val initializedRecord = audioRecord ?: throw IllegalStateException("Failed to initialize AudioRecord after 5 attempts")
+
+        currentAudioSessionId = initializedRecord.audioSessionId
 
         val audioBuffer = ShortArray(BUFFER_SIZE_IN_SHORTS)
 
         try {
-            audioRecord.startRecording()
+            initializedRecord.startRecording()
 
             while (coroutineContext.isActive) {
-                val readCount = audioRecord.read(audioBuffer, 0, audioBuffer.size)
+                val readCount = initializedRecord.read(audioBuffer, 0, audioBuffer.size)
 
                 if (readCount > 0) {
                     val floatBuffer = FloatArray(readCount) { i ->
@@ -80,10 +90,10 @@ internal class AudioRecorder(
             }
         } finally {
             currentAudioSessionId = 0
-            if (audioRecord.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
-                audioRecord.stop()
+            if (initializedRecord.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+                initializedRecord.stop()
             }
-            audioRecord.release()
+            initializedRecord.release()
         }
     }.flowOn(Dispatchers.IO)
 }

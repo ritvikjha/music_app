@@ -45,6 +45,9 @@ class WakeWordEngine(
     val currentAudioSessionId: Int
         get() = audioRecorder.currentAudioSessionId
 
+    val isRunning: Boolean
+        get() = recordingJob?.isActive == true
+
     private var recordingJob: Job? = null
 
     init {
@@ -66,51 +69,60 @@ class WakeWordEngine(
 
         recordingJob?.cancel()
         recordingJob = scope.launch {
-            audioRecorder.startRecording()
-                .collect { audioBuffer ->
-                    val detectionResults = models.mapIndexed { index, model ->
-                        async {
-                            try {
-                                val processor = modelProcessors[model]!!
-                                val score = processor.process(audioBuffer)
-                                Log.d(TAG, "${model.name} - Score: ${String.format("%.5f", score)}, Threshold: ${String.format("%.5f", model.threshold)}")
+            while (isActive) {
+                try {
+                    audioRecorder.startRecording()
+                        .collect { audioBuffer ->
+                            val detectionResults = models.mapIndexed { index, model ->
+                                async {
+                                    try {
+                                        val processor = modelProcessors[model]!!
+                                        val score = processor.process(audioBuffer)
+                                        Log.d(TAG, "${model.name} - Score: ${String.format("%.5f", score)}, Threshold: ${String.format("%.5f", model.threshold)}")
 
-                                _scores.emit(WakeWordScore(model, score))
+                                        _scores.emit(WakeWordScore(model, score))
 
-                                if (score > model.threshold) {
-                                    Log.d(TAG, "DETECTION! ${model.name} - Score: ${String.format("%.5f", score)} > Threshold: ${String.format("%.5f", model.threshold)}")
-                                    DetectionResult(
-                                        model = model,
-                                        score = score,
-                                        difference = score - model.threshold,
-                                        index = index
-                                    )
-                                } else {
-                                    null
+                                        if (score > model.threshold) {
+                                            Log.d(TAG, "DETECTION! ${model.name} - Score: ${String.format("%.5f", score)} > Threshold: ${String.format("%.5f", model.threshold)}")
+                                            DetectionResult(
+                                                model = model,
+                                                score = score,
+                                                difference = score - model.threshold,
+                                                index = index
+                                            )
+                                        } else {
+                                            null
+                                        }
+                                    } catch (e: Exception) {
+                                        Log.e(TAG, "Error processing model ${model.name}", e)
+                                        e.printStackTrace()
+                                        null
+                                    }
                                 }
-                            } catch (e: Exception) {
-                                Log.e(TAG, "Error processing model ${model.name}", e)
-                                e.printStackTrace()
-                                null
-                            }
-                        }
-                    }.awaitAll().filterNotNull()
+                            }.awaitAll().filterNotNull()
 
-                    when (detectionMode) {
-                        DetectionMode.SINGLE_BEST -> {
-                            detectionResults.maxByOrNull { result ->
-                                result.difference * 1000 - result.index * 0.001
-                            }?.let { result ->
-                                emitDetection(result.model, result.score)
+                            when (detectionMode) {
+                                DetectionMode.SINGLE_BEST -> {
+                                    detectionResults.maxByOrNull { result ->
+                                        result.difference * 1000 - result.index * 0.001
+                                    }?.let { result ->
+                                        emitDetection(result.model, result.score)
+                                    }
+                                }
+                                DetectionMode.ALL -> {
+                                    detectionResults.forEach { result ->
+                                        emitDetection(result.model, result.score)
+                                    }
+                                }
                             }
                         }
-                        DetectionMode.ALL -> {
-                            detectionResults.forEach { result ->
-                                emitDetection(result.model, result.score)
-                            }
-                        }
-                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w(TAG, "WakeWordEngine recording stream encountered error (${e.message}). Reconnecting in 500ms...", e)
+                    delay(500L)
                 }
+            }
         }
     }
 

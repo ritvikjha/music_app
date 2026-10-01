@@ -710,8 +710,8 @@ object CommandRegistry {
             CommandDefinition(
                 id = "GREETING_ACK",
                 patterns = listOf(
-                    Regex("""^(?:hey|hello|hi|namaste|pranam)(?:\s+(?:jarvis|bro|bhai|buddy|there))?$"""),
-                    Regex("""^(?:hey|hello|hi|jarvis)$"""),
+                    Regex("""^(?:hey|hay|he|hello|hlo|hi|yo|namaste|pranam|suno|sun)(?:\s+(?:jarvis|bro|bhai|buddy|there))?$"""),
+                    Regex("""^(?:hey|hay|he|hello|hlo|hi|yo|jarvis|suno|sun)$"""),
                     Regex("""^(?:are\s+you\s+there|you\s+there|you\s+listening)$"""),
                     Regex("""^(?:sun\s*rahe\s*ho|sun\s*bhai|kya\s*haal\s*hai|kuch\s*kaam\s*hai)$"""),
                     Regex("""^(?:aur\s*batao|kya\s*chal\s*raha\s*hai|kaise\s*ho)$""")
@@ -836,7 +836,7 @@ object CommandRegistry {
         // 2. Normalize and check functional commands
         val clean = normalize(rawTranscript)
         if (clean.isBlank()) {
-            if (trimmedRaw.contains("hey") || trimmedRaw.contains("hello") || trimmedRaw.contains("jarvis")) {
+            if (trimmedRaw.contains("hey") || trimmedRaw.contains("hay") || trimmedRaw.contains("hello") || trimmedRaw.contains("hlo") || trimmedRaw.contains("jarvis") || trimmedRaw.contains("suno") || trimmedRaw.contains("sun")) {
                 if (greetingCmd != null) {
                     return Pair(greetingCmd, emptyMap())
                 }

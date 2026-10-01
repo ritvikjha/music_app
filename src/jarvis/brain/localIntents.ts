@@ -988,8 +988,8 @@ const matchStatusReport: PatternMatcher = (text) => {
 const matchGreetings: PatternMatcher = (text) => {
   const clean = text.trim().toLowerCase().replace(/[?.!,;]+$/, '');
   if (
-    /^(?:hey|hello|hi|namaste|pranam)(?:\s+(?:jarvis|bro|bhai|buddy|there))?$/i.test(clean) ||
-    /^(?:hey|hello|hi|jarvis)$/i.test(clean) ||
+    /^(?:hey|hay|he|hello|hlo|hi|yo|namaste|pranam|suno|sun)(?:\s+(?:jarvis|bro|bhai|buddy|there))?$/i.test(clean) ||
+    /^(?:hey|hay|he|hello|hlo|hi|yo|jarvis|suno|sun)$/i.test(clean) ||
     /^(?:are\s+you\s+there|you\s+there|you\s+listening)$/i.test(clean) ||
     /^(?:sun\s*rahe\s*ho|sun\s*bhai|kya\s*haal\s*hai|kuch\s*kaam\s*hai)$/i.test(clean) ||
     /^(?:aur\s*batao|kya\s*chal\s*raha\s*hai|kaise\s*ho)$/i.test(clean)
@@ -1004,7 +1004,7 @@ const matchGreetings: PatternMatcher = (text) => {
     return {
       intent: 'GREETING',
       slots: {},
-      confidence: 0.99,
+      confidence: 1.0,
       spokenReply: replies[Math.floor(Math.random() * replies.length)],
       source: 'local',
     };
@@ -1149,9 +1149,24 @@ export function parseLocalIntent(
   rawTranscript: string,
   context?: BrainContext
 ): IntentResult {
+  // 1. Direct check: Greetings ("Hey", "Hey Jarvis", "Hello Jarvis", etc.)
+  const greetingCheck = matchGreetings(rawTranscript, context);
+  if (greetingCheck) {
+    return greetingCheck;
+  }
+
   const text = normalizeTranscript(rawTranscript);
 
   if (!text) {
+    if (/^(?:hey|hay|he|hello|hlo|hi|yo|jarvis|suno|sun)/i.test(rawTranscript.trim())) {
+      return {
+        intent: 'GREETING',
+        slots: {},
+        confidence: 1.0,
+        spokenReply: 'At your service, sir. What can I do for you?',
+        source: 'local',
+      };
+    }
     return {
       intent: 'UNKNOWN',
       slots: {},
