@@ -925,7 +925,12 @@ class JarvisListenerService : Service() {
                 "use_fallback_lang" to useFallbackLang
             ))
 
-            val recognizer = SpeechRecognizer.createSpeechRecognizer(this)
+            val recognizer = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && SpeechRecognizer.isOnDeviceRecognitionAvailable(this)) {
+                Log.i(TAG, "Creating fast zero-latency on-device SpeechRecognizer")
+                SpeechRecognizer.createOnDeviceSpeechRecognizer(this)
+            } else {
+                SpeechRecognizer.createSpeechRecognizer(this)
+            }
             speechRecognizer = recognizer
             hasStartedSpeaking.set(false)
             latestTranscript = ""
