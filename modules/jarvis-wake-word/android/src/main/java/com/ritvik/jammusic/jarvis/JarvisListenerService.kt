@@ -84,9 +84,9 @@ class JarvisListenerService : Service() {
         /** Active service instance reference */
         var instance: JarvisListenerService? = null
 
-        /** Allow barge-in during TTS (defaults to false to prevent speaker echo loops) */
+        /** Allow barge-in during TTS (enabled by default so user can interrupt at any time) */
         @Volatile
-        var allowBargeIn: Boolean = false
+        var allowBargeIn: Boolean = true
 
         /** Settings: Only listen when phone is connected to charger */
         @Volatile
