@@ -18,9 +18,226 @@ const io = new Server(server, {
 const PORT = process.env.PORT || 3000;
 const DUEL_STATE_FILE = process.env.DUEL_STATE_FILE || path.join(__dirname, 'data', 'duel-state.json');
 
+app.use(express.json());
+
 // Health check endpoint for Fly.io and uptime monitors
 app.get('/', (req, res) => {
   res.json({ status: 'ok', service: 'jam-sync-server' });
+});
+
+// ==========================================
+// Jarvis Brain LLM Proxy (Stage 3)
+// Primary: Gemini 2.0 Flash (Free Tier)
+// Secondary: Groq LLaMA 3.3 70B (Free Tier)
+// ==========================================
+
+const deviceRateLimits = new Map();
+function checkRateLimit(deviceId, maxRequests = 30, windowMs = 60000) {
+  const now = Date.now();
+  let record = deviceRateLimits.get(deviceId);
+  if (!record || now > record.resetTime) {
+    record = { count: 1, resetTime: now + windowMs };
+    deviceRateLimits.set(deviceId, record);
+    return true;
+  }
+  if (record.count >= maxRequests) {
+    return false;
+  }
+  record.count++;
+  return true;
+}
+
+// Clean up expired rate limit records periodically
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, record] of deviceRateLimits) {
+    if (now > record.resetTime) deviceRateLimits.delete(id);
+  }
+}, 300000);
+
+const JARVIS_SYSTEM_PROMPT = `You are the natural language intent parser for a music app named Jam.
+Analyze the user's transcript and conversation context, then map it into an intent JSON object.
+
+Allowed IntentNames:
+- PLAY_SONG: slots: { query: string, artist?: string }
+- PLAY_ARTIST: slots: { artist: string }
+- PLAY_TRENDING: slots: {}
+- PLAY_SIMILAR: slots: {}
+- PAUSE: slots: {}
+- RESUME: slots: {}
+- NEXT: slots: {}
+- PREVIOUS: slots: {}
+- SEEK: slots: { seconds: number, relative: boolean }
+- VOLUME_SET: slots: { percent: number }
+- VOLUME_UP: slots: {}
+- VOLUME_DOWN: slots: {}
+- LIKE: slots: {}
+- UNLIKE: slots: {}
+- ADD_TO_QUEUE: slots: { query: string }
+- PLAY_NEXT: slots: { query: string }
+- SHUFFLE: slots: { on: boolean }
+- REPEAT: slots: { mode: "off" | "all" | "one" }
+- SLEEP_TIMER: slots: { minutes: number }
+- CANCEL_SLEEP_TIMER: slots: {}
+- WHAT_IS_PLAYING: slots: {}
+- OPEN_SCREEN: slots: { screen: "home" | "library" | "jam" | "games" | "profile" | "player" | "friends" }
+- CLEAR_QUEUE: slots: {}, needsConfirmation: true
+- CHAT: slots: { reply: string } (for general knowledge, trivia, greeting, or small talk)
+- UNKNOWN: slots: {}
+
+Return ONLY valid JSON matching this schema:
+{
+  "intent": "<IntentName>",
+  "slots": { ... },
+  "confidence": <number between 0.0 and 1.0>,
+  "spokenReply": "<concise, natural spoken reply for the user>",
+  "needsConfirmation": <boolean, optional>,
+  "source": "llm"
+}`;
+
+async function callGemini(promptText, apiKey, timeoutMs = 6000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts: [{ text: JARVIS_SYSTEM_PROMPT + '\n\n' + promptText }] }],
+        generationConfig: {
+          response_mime_type: 'application/json',
+          temperature: 0.1,
+          maxOutputTokens: 300
+        }
+      }),
+      signal: controller.signal
+    });
+    clearTimeout(timer);
+    if (!res.ok) throw new Error(`Gemini status ${res.status}`);
+    const data = await res.json();
+    const candidate = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!candidate) throw new Error('Empty Gemini response');
+    const parsed = JSON.parse(candidate);
+    parsed.source = 'llm';
+    return parsed;
+  } catch (err) {
+    clearTimeout(timer);
+    throw err;
+  }
+}
+
+async function callGroq(promptText, apiKey, timeoutMs = 6000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const url = 'https://api.groq.com/openai/v1/chat/completions';
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: 'llama-3.3-70b-versatile',
+        messages: [
+          { role: 'system', content: JARVIS_SYSTEM_PROMPT },
+          { role: 'user', content: promptText }
+        ],
+        response_format: { type: 'json_object' },
+        temperature: 0.1,
+        max_tokens: 300
+      }),
+      signal: controller.signal
+    });
+    clearTimeout(timer);
+    if (!res.ok) throw new Error(`Groq status ${res.status}`);
+    const data = await res.json();
+    const content = data.choices?.[0]?.message?.content;
+    if (!content) throw new Error('Empty Groq response');
+    const parsed = JSON.parse(content);
+    parsed.source = 'llm';
+    return parsed;
+  } catch (err) {
+    clearTimeout(timer);
+    throw err;
+  }
+}
+
+app.post('/jarvis/brain', async (req, res) => {
+  const startTime = Date.now();
+
+  // 1. Verify shared token if configured
+  const token = req.headers['x-jarvis-token'];
+  const expectedToken = process.env.JARVIS_APP_TOKEN || 'jarvis-jam-secret-2026';
+  if (token && token !== expectedToken) {
+    return res.status(401).json({ error: 'Invalid auth token' });
+  }
+
+  // 2. Rate limiting per device / IP (30 req/min)
+  const deviceId = req.body?.deviceId || req.ip || 'anonymous';
+  if (!checkRateLimit(deviceId)) {
+    return res.status(429).json({ error: 'Rate limit exceeded (30 req/min)' });
+  }
+
+  const { transcript, currentSongTitle, currentSongArtist, isPlaying, queueLength, history } = req.body || {};
+  if (!transcript || typeof transcript !== 'string') {
+    return res.status(400).json({ error: 'Missing transcript' });
+  }
+
+  const prompt = `User transcript: "${transcript}"
+Context:
+- Current song: "${currentSongTitle || 'None'}" by "${currentSongArtist || 'Unknown'}"
+- Playing: ${isPlaying ? 'yes' : 'no'}
+- Queue length: ${queueLength || 0}
+- Recent history: ${JSON.stringify(history || [])}
+
+Map this to the appropriate intent schema in JSON.`;
+
+  const geminiKey = process.env.GEMINI_API_KEY;
+  const groqKey = process.env.GROQ_API_KEY;
+
+  try {
+    if (geminiKey) {
+      try {
+        const result = await callGemini(prompt, geminiKey);
+        result.latencyMs = Date.now() - startTime;
+        return res.json(result);
+      } catch (geminiErr) {
+        console.warn('[Jarvis Server] Gemini error, trying Groq fallback:', geminiErr.message);
+      }
+    }
+
+    if (groqKey) {
+      try {
+        const result = await callGroq(prompt, groqKey);
+        result.latencyMs = Date.now() - startTime;
+        return res.json(result);
+      } catch (groqErr) {
+        console.warn('[Jarvis Server] Groq error:', groqErr.message);
+      }
+    }
+
+    // Fallback if neither API is configured or available
+    return res.json({
+      intent: 'UNKNOWN',
+      slots: { raw: transcript },
+      confidence: 0,
+      spokenReply: "I couldn't process that right now.",
+      source: 'llm',
+      latencyMs: Date.now() - startTime
+    });
+  } catch (err) {
+    console.error('[Jarvis Server] Brain route error:', err.message);
+    return res.json({
+      intent: 'UNKNOWN',
+      slots: { raw: transcript },
+      confidence: 0,
+      spokenReply: "Sorry, I had trouble understanding that.",
+      source: 'llm',
+      latencyMs: Date.now() - startTime
+    });
+  }
 });
 
 /**

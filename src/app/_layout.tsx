@@ -14,6 +14,7 @@ import { SleepTimerProvider } from '../context/SleepTimerContext';
 import { colors } from '../theme';
 import { OfflineStatusPill } from '../components/OfflineStatusPill';
 import { GameInviteListener } from '../components/GameInviteListener';
+import { JarvisBridge } from '../jarvis/JarvisBridge';
 
 /**
  * Root layout — wraps the entire app in providers and configures
@@ -34,6 +35,7 @@ export default function RootLayout() {
                 <SleepTimerProvider>
                   <JamProvider>
                     <ToastProvider>
+                    <JarvisBridge />
                     <StatusBar style="light" />
                     <OfflineStatusPill />
                     <GameInviteListener />

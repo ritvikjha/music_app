@@ -41,6 +41,12 @@ example
 
 # generated native folders
 /ios
-/android
-android/build
+
+# Android build artifacts (native project itself IS tracked)
+android/build/
+android/app/build/
+android/.gradle/
+android/app/.cxx/
+android/local.properties
+
 /server/data/duel-state.json*

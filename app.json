@@ -7,9 +7,7 @@
     "icon": "./assets/images/icon.png",
     "scheme": "jam",
     "userInterfaceStyle": "dark",
-    "runtimeVersion": {
-      "policy": "appVersion"
-    },
+    "runtimeVersion": "1.0.0",
     "updates": {
       "url": "https://u.expo.dev/850208bd-e375-4a42-ac0d-7bc917402695",
       "checkAutomatically": "ON_LOAD",
@@ -30,7 +28,13 @@
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
-      }
+      },
+      "permissions": [
+        "RECORD_AUDIO",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_MICROPHONE",
+        "POST_NOTIFICATIONS"
+      ]
     },
     "web": {
       "output": "static",

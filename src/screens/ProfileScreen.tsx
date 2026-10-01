@@ -32,6 +32,16 @@ import { getActivePreset } from '../services/soundPresets';
 import { setPreferredAudioQuality } from '../services/saavn';
 import { colors, spacing, borderRadius, typography, shadows } from '../theme';
 import type { Song } from '../types';
+import {
+  startJarvis,
+  stopJarvis,
+  isJarvisEnabled,
+  isOnboardingCompleted,
+} from '../jarvis/JarvisService';
+import { JarvisDebugModal } from '../components/JarvisDebugModal';
+import { JarvisOnboardingModal } from '../jarvis/ui/JarvisOnboardingModal';
+import { JarvisStatusRow } from '../jarvis/ui/JarvisStatusRow';
+import { JarvisSettingsSection } from '../jarvis/ui/JarvisSettingsSection';
 
 const PROFILE_CUSTOM_KEY = '@jam_custom_profile';
 const AUDIO_QUALITY_KEY = '@jam_audio_quality';
@@ -68,6 +78,12 @@ export default function ProfileScreen() {
   const [showSoundPresets, setShowSoundPresets] = useState(false);
   const [showListeningWrap, setShowListeningWrap] = useState(false);
   const [activePresetName, setActivePresetName] = useState('Cyber Dynamic');
+
+  // Jarvis Voice Assistant state
+  const [jarvisEnabled, setJarvisEnabled] = useState(false);
+  const [jarvisLoading, setJarvisLoading] = useState(false);
+  const [showJarvisDebugModal, setShowJarvisDebugModal] = useState(false);
+  const [showJarvisOnboarding, setShowJarvisOnboarding] = useState(false);
 
   // Profile Customization state
   const [profileCustom, setProfileCustom] = useState<UserProfileCustom>({
@@ -110,6 +126,33 @@ export default function ProfileScreen() {
         }
       } catch (err) {
         console.warn('[Profile] Failed to load custom settings:', err);
+      }
+
+      // Restore Jarvis toggle state
+      try {
+        const jarvisWasEnabled = await isJarvisEnabled();
+        setJarvisEnabled(jarvisWasEnabled);
+        if (jarvisWasEnabled) {
+          await startJarvis({
+            onWakeDetected: (modelName, score) => {
+              showToast(`Jarvis heard you! (${score.toFixed(2)})`, 'success');
+            },
+            onTranscript: (text, isFinal) => {
+              if (isFinal) {
+                showToast(`You said: "${text}"`, 'info');
+              }
+            },
+            onError: (reason) => {
+              if (reason === 'no_speech') {
+                showToast('Jarvis: No speech detected', 'info');
+              } else if (reason === 'recognizer_unavailable') {
+                showToast('Jarvis: Speech recognizer unavailable', 'error');
+              }
+            },
+          });
+        }
+      } catch (err) {
+        console.warn('[Profile] Failed to restore Jarvis state:', err);
       }
     })();
   }, []);
@@ -523,6 +566,90 @@ export default function ProfileScreen() {
             />
           </View>
 
+          {/* Jarvis Voice Assistant */}
+          <View style={styles.settingsItem}>
+            <View style={styles.settingsItemLeft}>
+              <Ionicons
+                name={jarvisEnabled ? 'mic' : 'mic-off-outline'}
+                size={20}
+                color={jarvisEnabled ? '#F43F5E' : colors.textSecondary}
+              />
+              <View>
+                <Text style={styles.settingsText}>Jarvis Voice Assistant</Text>
+                <Text style={styles.settingsSubtext}>
+                  {jarvisLoading
+                    ? 'Starting…'
+                    : jarvisEnabled
+                    ? 'Listening for "Hey Jarvis"'
+                    : 'Always-on wake word detection'}
+                </Text>
+              </View>
+            </View>
+            <Switch
+              value={jarvisEnabled}
+              disabled={jarvisLoading}
+              onValueChange={async (value) => {
+                if (value) {
+                  const onboardingDone = await isOnboardingCompleted();
+                  if (!onboardingDone) {
+                    setShowJarvisOnboarding(true);
+                    return;
+                  }
+                }
+                setJarvisLoading(true);
+                try {
+                  if (value) {
+                    const started = await startJarvis({
+                      onWakeDetected: (modelName, score) => {
+                        showToast(`Jarvis heard you! (${score.toFixed(2)})`, 'success');
+                      },
+                      onTranscript: (text, isFinal) => {
+                        if (isFinal) {
+                          showToast(`You said: "${text}"`, 'info');
+                        }
+                      },
+                      onError: (reason) => {
+                        if (reason === 'no_speech') {
+                          showToast('Jarvis: No speech detected', 'info');
+                        } else if (reason === 'recognizer_unavailable') {
+                          showToast('Jarvis: Speech recognizer unavailable', 'error');
+                        }
+                      },
+                    });
+                    setJarvisEnabled(started);
+                    if (started) {
+                      showToast('Jarvis is now listening', 'info');
+                    }
+                  } else {
+                    await stopJarvis();
+                    setJarvisEnabled(false);
+                    showToast('Jarvis stopped listening', 'info');
+                  }
+                } catch (err) {
+                  console.warn('[Profile] Jarvis toggle error:', err);
+                } finally {
+                  setJarvisLoading(false);
+                }
+              }}
+              trackColor={{ false: '#3E3E3E', true: '#F43F5E' }}
+              thumbColor="#FFFFFF"
+            />
+          </View>
+
+          {/* Health & Status Row (Listening / Paused / Battery / Permissions + Telemetry) */}
+          <JarvisStatusRow
+            enabled={jarvisEnabled}
+            onOpenSetupGuide={() => setShowJarvisOnboarding(true)}
+          />
+
+          {/* Jarvis Configuration Settings Section */}
+          {jarvisEnabled && (
+            <JarvisSettingsSection
+              onOpenDebugModal={() => setShowJarvisDebugModal(true)}
+              showToast={showToast}
+            />
+          )}
+
           {/* Audio Quality Toggle */}
           <TouchableOpacity
             style={styles.settingsItem}
@@ -588,7 +715,14 @@ export default function ProfileScreen() {
           </TouchableOpacity>
 
           {/* About Jam */}
-          <View style={styles.settingsItem}>
+          <TouchableOpacity
+            style={styles.settingsItem}
+            activeOpacity={0.8}
+            onLongPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+              setShowJarvisDebugModal(true);
+            }}
+          >
             <View style={styles.settingsItemLeft}>
               <Ionicons name="information-circle-outline" size={20} color={colors.textSecondary} />
               <View>
@@ -597,7 +731,7 @@ export default function ProfileScreen() {
               </View>
             </View>
             <Text style={styles.versionText}>v1.0.0 (OTA)</Text>
-          </View>
+          </TouchableOpacity>
         </View>
 
         {/* Logout Button */}
@@ -701,6 +835,41 @@ export default function ProfileScreen() {
       />
 
       <CyberListeningWrapModal visible={showListeningWrap} onClose={() => setShowListeningWrap(false)} favorites={likedSongs} history={recentSongs} currentSong={currentSong} listeningStats={listeningStats} />
+      <JarvisDebugModal visible={showJarvisDebugModal} onClose={() => setShowJarvisDebugModal(false)} />
+      <JarvisOnboardingModal
+        visible={showJarvisOnboarding}
+        onClose={async (completed) => {
+          setShowJarvisOnboarding(false);
+          if (completed) {
+            setJarvisLoading(true);
+            try {
+              const started = await startJarvis({
+                onWakeDetected: (modelName, score) => {
+                  showToast(`Jarvis heard you! (${score.toFixed(2)})`, 'success');
+                },
+                onTranscript: (text, isFinal) => {
+                  if (isFinal) {
+                    showToast(`You said: "${text}"`, 'info');
+                  }
+                },
+                onError: (reason) => {
+                  if (reason === 'no_speech') {
+                    showToast('Jarvis: No speech detected', 'info');
+                  }
+                },
+              });
+              setJarvisEnabled(started);
+              if (started) {
+                showToast('Jarvis is now listening', 'info');
+              }
+            } catch (err) {
+              console.warn('[Profile] Failed to start Jarvis after onboarding:', err);
+            } finally {
+              setJarvisLoading(false);
+            }
+          }
+        }}
+      />
       <MiniPlayer />
     </View>
   );

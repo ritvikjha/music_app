@@ -1,8 +1,17 @@
 {
   "cli": {
-    "version": ">= 3.0.0"
+    "version": ">= 3.0.0",
+    "appVersionSource": "remote"
   },
   "build": {
+    "development": {
+      "developmentClient": true,
+      "channel": "development",
+      "android": {
+        "buildType": "apk"
+      },
+      "distribution": "internal"
+    },
     "preview": {
       "channel": "preview",
       "android": {
