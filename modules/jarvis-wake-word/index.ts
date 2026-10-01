@@ -23,6 +23,7 @@ import type {
   CommandErrorEvent,
   CommandErrorReason,
   SpeechDoneEvent,
+  TimelineEvent,
 } from './src/JarvisWakeWord.types';
 
 export interface NativeCommandEvent {
@@ -46,6 +47,7 @@ type JarvisEvents = {
   onCommandError: (event: CommandErrorEvent) => void;
   onNativeCommandExecuted: (event: NativeCommandEvent) => void;
   onSpeechDone: (event: SpeechDoneEvent) => void;
+  onTimelineEvent: (event: TimelineEvent) => void;
 };
 
 // Load the native module (Android only)
@@ -156,6 +158,15 @@ export function addNativeCommandListener(
   callback: (event: NativeCommandEvent) => void
 ): EventSubscription {
   return emitter.addListener('onNativeCommandExecuted', callback);
+}
+
+/**
+ * Subscribe to millisecond timeline diagnostic events.
+ */
+export function addTimelineListener(
+  callback: (event: TimelineEvent) => void
+): EventSubscription {
+  return emitter.addListener('onTimelineEvent', callback);
 }
 
 /**

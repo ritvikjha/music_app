@@ -116,6 +116,7 @@ class JarvisListenerService : Service() {
         var onCommandError: ((reason: String) -> Unit)? = null
         var onNativeCommandExecuted: ((actionId: String, spokenReply: String, success: Boolean) -> Unit)? = null
         var onSpeechDone: ((utteranceId: String) -> Unit)? = null
+        var onTimelineEvent: ((event: String, elapsedMs: Long, details: Map<String, Any>) -> Unit)? = null
     }
 
     private var wakeWordEngine: WakeWordEngine? = null
@@ -128,6 +129,8 @@ class JarvisListenerService : Service() {
     private val isCapturingCommand = AtomicBoolean(false)
     private val hasStartedSpeaking = AtomicBoolean(false)
     private var latestTranscript: String = ""
+    private var wakeDetectedTs: Long = 0L
+    private var hasRetriedCapture = false
 
     private var noSpeechJob: Job? = null
     private var hardCapJob: Job? = null
@@ -278,10 +281,30 @@ class JarvisListenerService : Service() {
     // State Machine & Notification Management
     // ==========================================
 
+    private fun logTimeline(event: String, details: Map<String, Any> = emptyMap()) {
+        val now = System.currentTimeMillis()
+        val elapsedMs = if (wakeDetectedTs > 0) now - wakeDetectedTs else 0L
+        Log.i(TAG, "[TIMELINE +${elapsedMs}ms] $event ${if (details.isNotEmpty()) details else ""}")
+        try {
+            onTimelineEvent?.invoke(event, elapsedMs, details)
+        } catch (e: Exception) {
+            Log.w(TAG, "Error emitting onTimelineEvent", e)
+        }
+    }
+
     private fun setState(newState: JarvisState) {
+        if (isCapturingCommand.get()) {
+            // Guard: while command capture is actively running, refuse external pauses
+            if (newState == JarvisState.PAUSED_MIC_IN_USE || newState == JarvisState.PAUSED_CHARGING_ONLY) {
+                Log.w(TAG, "Blocked setState to $newState: command capture is currently active")
+                return
+            }
+        }
+
         val oldState = currentState.getAndSet(newState)
         if (oldState != newState) {
             Log.i(TAG, "Jarvis state transition: $oldState -> $newState")
+            logTimeline("STATE_TRANSITION", mapOf("from" to oldState.name, "to" to newState.name))
             onJarvisStateChanged?.invoke(newState)
         }
     }
@@ -688,6 +711,14 @@ class JarvisListenerService : Service() {
 
     private fun startWakeWordEngine() {
         if (wakeWordEngine != null) return
+        if (isCapturingCommand.get()) {
+            Log.w(TAG, "Refusing startWakeWordEngine: command capture is active")
+            return
+        }
+        if (currentState.get() != JarvisState.IDLE_LISTENING) {
+            Log.w(TAG, "Refusing startWakeWordEngine: currentState is ${currentState.get()}, not IDLE_LISTENING")
+            return
+        }
 
         val isHello = selectedWakeModel.contains("hello")
         val modelAsset = if (isHello) "hello_jarvis.onnx" else "hey_jarvis.onnx"
@@ -756,6 +787,10 @@ class JarvisListenerService : Service() {
     // ==========================================
 
     private fun handleWakeWordDetected(modelName: String, score: Float) {
+        wakeDetectedTs = System.currentTimeMillis()
+        hasRetriedCapture = false
+        logTimeline("WAKE_DETECTED", mapOf("model" to modelName, "score" to score.toDouble()))
+
         // Stop any active TTS immediately if user barged in
         ttsHelper?.stop()
 
@@ -765,59 +800,71 @@ class JarvisListenerService : Service() {
             return
         }
 
-        lastCaptureStartTs = System.currentTimeMillis()
+        lastCaptureStartTs = wakeDetectedTs
         setState(JarvisState.WAKE_DETECTED)
         onWakeWordDetected?.invoke(modelName, score)
         updateNotification("Jarvis: Listening…", "Speak your command")
 
-        // 1. Duck background music so user's voice is not drowned
-        requestTransientAudioFocus()
+        // 1. Duck background music asynchronously (do not block recognizer startup!)
+        serviceScope.launch {
+            requestTransientAudioFocus()
+            logTimeline("AUDIO_FOCUS_REQUESTED", mapOf("mode" to "TRANSIENT_MAY_DUCK"))
+        }
 
-        // 2. Play feedback earcon and trigger haptic pulse
-        playEarcon(ToneGenerator.TONE_PROP_BEEP, 150)
-        triggerVibration(100)
-
-        // 3. Release wake-word AudioRecord so SpeechRecognizer can exclusively own the mic
+        // 2. Immediately release wake-word AudioRecord so mic is completely free
         stopWakeWordEngine()
+        logTimeline("AUDIO_RECORD_RELEASED")
 
-        // 4. Command capture safety watchdog: guarantees return to idle after at most 14s
+        // 3. Command capture safety watchdog: guarantees return to idle after at most 14s
         captureSafetyWatchdogJob?.cancel()
         captureSafetyWatchdogJob = serviceScope.launch {
             delay(14000L)
             if (isCapturingCommand.get()) {
                 Log.w(TAG, "⚠️ Command capture safety watchdog timeout after 14s — forcing return to idle")
+                logTimeline("WATCHDOG_TIMEOUT_FORCE_IDLE")
                 finishCaptureAndReturnToIdle(isError = true)
             }
         }
 
-        // 5. Start SpeechRecognizer on the Main looper
+        // 4. Start SpeechRecognizer IMMEDIATELY on the Main looper (Earcon will play in onReadyForSpeech!)
         mainHandler.post {
-            startSpeechRecognition()
+            startSpeechRecognition(silenceTimeoutMs = 8000L)
         }
     }
 
-    private fun startSpeechRecognition(silenceTimeoutMs: Long = 6000L) {
+    private fun startSpeechRecognition(silenceTimeoutMs: Long = 8000L) {
+        // Destroy any stale instance on Main looper before creating new one
+        try {
+            speechRecognizer?.destroy()
+        } catch (e: Exception) {}
+        speechRecognizer = null
+
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
             Log.e(TAG, "SpeechRecognizer is NOT available on this device")
+            logTimeline("RECOGNIZER_UNAVAILABLE")
             onCommandError?.invoke("recognizer_unavailable")
             finishCaptureAndReturnToIdle(isError = true)
             return
         }
 
         try {
-            val recognizer = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                SpeechRecognizer.isOnDeviceRecognitionAvailable(this)
-            ) {
-                Log.i(TAG, "Creating on-device SpeechRecognizer (Android 13+)")
-                SpeechRecognizer.createOnDeviceSpeechRecognizer(this)
-            } else {
-                Log.i(TAG, "Creating system SpeechRecognizer")
-                SpeechRecognizer.createSpeechRecognizer(this)
-            }
+            // Query and log available recognition service packages
+            val recognitionIntent = Intent(RecognitionService.SERVICE_INTERFACE)
+            val availableServices = packageManager.queryIntentServices(recognitionIntent, 0)
+            val servicePackageNames = availableServices.map { "${it.serviceInfo.packageName}/${it.serviceInfo.name}" }
+            val defaultPkg = availableServices.firstOrNull()?.serviceInfo?.packageName ?: "system_default"
 
+            logTimeline("RECOGNIZER_INIT_START", mapOf("available_services" to servicePackageNames))
+
+            val recognizer = SpeechRecognizer.createSpeechRecognizer(this)
             speechRecognizer = recognizer
             hasStartedSpeaking.set(false)
             latestTranscript = ""
+
+            logTimeline("RECOGNIZER_CREATED", mapOf(
+                "service_package" to defaultPkg,
+                "services_count" to availableServices.size
+            ))
 
             // Respect user's preferred language setting
             val langTag = when (preferredLanguage) {
@@ -834,22 +881,38 @@ class JarvisListenerService : Service() {
                 putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
                 putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1500L)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
+
+                // Precise timeouts: minimum speech 800ms, complete silence 1800ms, possible silence 1500ms
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 800L)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1800L)
                 putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
             }
 
             recognizer.setRecognitionListener(object : RecognitionListener {
                 override fun onReadyForSpeech(params: Bundle?) {
-                    Log.i(TAG, "STT onReadyForSpeech — listening for speech (lang: $langTag)")
+                    val gapMs = if (wakeDetectedTs > 0) System.currentTimeMillis() - wakeDetectedTs else 0L
+                    Log.i(TAG, "STT onReadyForSpeech — listening for speech (gap: ${gapMs}ms, lang: $langTag)")
                     setState(JarvisState.CAPTURING)
-                    startCaptureTimers(silenceTimeoutMs)
+
+                    // Step 2a: Play earcon beep and trigger haptic pulse AFTER onReadyForSpeech
+                    playEarcon(ToneGenerator.TONE_PROP_BEEP, 120)
+                    triggerVibration(80)
+
+                    logTimeline("ON_READY_FOR_SPEECH", mapOf(
+                        "wake_to_ready_gap_ms" to gapMs,
+                        "earcon_played" to true
+                    ))
+
+                    // Step 2b: 8-second no-speech timeout counted from onReadyForSpeech
+                    startCaptureTimers(silenceTimeoutMs = silenceTimeoutMs)
                 }
 
                 override fun onBeginningOfSpeech() {
-                    Log.i(TAG, "STT onBeginningOfSpeech — user began speaking")
+                    val gapFromWakeMs = if (wakeDetectedTs > 0) System.currentTimeMillis() - wakeDetectedTs else 0L
+                    Log.i(TAG, "STT onBeginningOfSpeech — user began speaking (+${gapFromWakeMs}ms from wake)")
                     hasStartedSpeaking.set(true)
                     noSpeechJob?.cancel()
+                    logTimeline("ON_BEGINNING_OF_SPEECH", mapOf("elapsed_from_wake_ms" to gapFromWakeMs))
                 }
 
                 override fun onRmsChanged(rmsdB: Float) {}
@@ -859,9 +922,28 @@ class JarvisListenerService : Service() {
                     Log.i(TAG, "STT onEndOfSpeech — transcribing speech…")
                     setState(JarvisState.TRANSCRIBING)
                     updateNotification("Jarvis: Transcribing…", "Converting speech to text…")
+                    logTimeline("ON_END_OF_SPEECH")
                 }
 
                 override fun onError(error: Int) {
+                    val errorName = when (error) {
+                        SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "ERROR_NETWORK_TIMEOUT"
+                        SpeechRecognizer.ERROR_NETWORK -> "ERROR_NETWORK"
+                        SpeechRecognizer.ERROR_AUDIO -> "ERROR_AUDIO"
+                        SpeechRecognizer.ERROR_SERVER -> "ERROR_SERVER"
+                        SpeechRecognizer.ERROR_CLIENT -> "ERROR_CLIENT"
+                        SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "ERROR_SPEECH_TIMEOUT"
+                        SpeechRecognizer.ERROR_NO_MATCH -> "ERROR_NO_MATCH"
+                        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "ERROR_RECOGNIZER_BUSY"
+                        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "ERROR_INSUFFICIENT_PERMISSIONS"
+                        SpeechRecognizer.ERROR_TOO_MANY_REQUESTS -> "ERROR_TOO_MANY_REQUESTS"
+                        SpeechRecognizer.ERROR_SERVER_DISCONNECTED -> "ERROR_SERVER_DISCONNECTED"
+                        SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED -> "ERROR_LANGUAGE_NOT_SUPPORTED"
+                        SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE -> "ERROR_LANGUAGE_UNAVAILABLE"
+                        SpeechRecognizer.ERROR_CANNOT_CHECK_SUPPORT -> "ERROR_CANNOT_CHECK_SUPPORT"
+                        else -> "ERROR_UNKNOWN"
+                    }
+
                     val reason = when (error) {
                         SpeechRecognizer.ERROR_NO_MATCH,
                         SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "no_speech"
@@ -869,7 +951,38 @@ class JarvisListenerService : Service() {
                         SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "mic_busy"
                         else -> "other"
                     }
-                    Log.w(TAG, "STT onError: code=$error mappedReason=$reason")
+
+                    val speechStarted = hasStartedSpeaking.get()
+                    Log.w(TAG, "STT onError: code=$error ($errorName) mappedReason=$reason speechStarted=$speechStarted")
+                    logTimeline("ON_ERROR", mapOf(
+                        "error_code" to error,
+                        "error_name" to errorName,
+                        "mapped_reason" to reason,
+                        "speech_started" to speechStarted
+                    ))
+
+                    // Step 2e: If NO_MATCH or SPEECH_TIMEOUT before speech started, auto-retry ONCE
+                    val isNoSpeechOrNoMatch = (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT)
+                    if (isNoSpeechOrNoMatch && !speechStarted && !hasRetriedCapture && isCapturingCommand.get()) {
+                        hasRetriedCapture = true
+                        logTimeline("AUTO_RETRY_INITIATED", mapOf("previous_error" to errorName))
+                        Log.i(TAG, "STT failed before speech started ($errorName) — auto-retrying ONCE with prompt cue")
+                        playEarcon(ToneGenerator.TONE_PROP_PROMPT, 100)
+                        ttsHelper?.speak("I didn't catch that", null)
+
+                        serviceScope.launch {
+                            delay(1300L) // Wait for prompt cue
+                            if (isCapturingCommand.get()) {
+                                mainHandler.post {
+                                    startSpeechRecognition(silenceTimeoutMs = 6000L)
+                                }
+                            }
+                        }
+                        return
+                    }
+
+                    // Audible / spoken feedback so never silent
+                    playEarcon(ToneGenerator.TONE_PROP_NACK, 120)
                     onCommandError?.invoke(reason)
                     finishCaptureAndReturnToIdle(isError = true)
                 }
@@ -881,6 +994,10 @@ class JarvisListenerService : Service() {
                     val confidence = confidences?.firstOrNull()
 
                     Log.i(TAG, "STT onResults: '$text' (confidence: $confidence)")
+                    logTimeline("ON_RESULTS", mapOf(
+                        "text" to text,
+                        "confidence" to (confidence?.toDouble() ?: 0.0)
+                    ))
 
                     if (text.isNotBlank()) {
                         serviceScope.launch {
@@ -907,6 +1024,7 @@ class JarvisListenerService : Service() {
                     val partialText = matches?.firstOrNull()?.trim() ?: ""
                     if (partialText.isNotBlank()) {
                         latestTranscript = partialText
+                        logTimeline("ON_PARTIAL_RESULTS", mapOf("text" to partialText))
                         onCommandTranscript?.invoke(partialText, false, null, false)
                     }
                 }
@@ -914,15 +1032,17 @@ class JarvisListenerService : Service() {
                 override fun onEvent(eventType: Int, params: Bundle?) {}
             })
 
+            logTimeline("START_LISTENING_CALLED")
             recognizer.startListening(intent)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start SpeechRecognizer", e)
+            logTimeline("RECOGNIZER_START_EXCEPTION", mapOf("exception" to (e.message ?: "unknown")))
             onCommandError?.invoke("other")
             finishCaptureAndReturnToIdle(isError = true)
         }
     }
 
-    private fun startCaptureTimers(silenceTimeoutMs: Long = 6000L) {
+    private fun startCaptureTimers(silenceTimeoutMs: Long = 8000L) {
         noSpeechJob?.cancel()
         hardCapJob?.cancel()
 
@@ -930,6 +1050,7 @@ class JarvisListenerService : Service() {
             delay(silenceTimeoutMs)
             if (currentState.get() == JarvisState.CAPTURING && !hasStartedSpeaking.get()) {
                 Log.w(TAG, "No speech detected within ${silenceTimeoutMs}ms — aborting capture")
+                logTimeline("NO_SPEECH_TIMEOUT", mapOf("timeoutMs" to silenceTimeoutMs))
                 mainHandler.post {
                     try {
                         speechRecognizer?.stopListening()
@@ -944,6 +1065,7 @@ class JarvisListenerService : Service() {
             delay(12000L)
             if (currentState.get() == JarvisState.CAPTURING || currentState.get() == JarvisState.TRANSCRIBING) {
                 Log.w(TAG, "12-second hard cap reached — finalizing capture")
+                logTimeline("HARD_CAP_REACHED")
                 mainHandler.post {
                     try {
                         speechRecognizer?.stopListening()
@@ -988,7 +1110,8 @@ class JarvisListenerService : Service() {
                 abandonTransientAudioFocus()
                 setState(JarvisState.COOLDOWN)
                 updateNotification("Jarvis is listening", "Waiting for \"Hey Jarvis\"…")
-                delay(700L)
+                // Prompt instruction: skip the ~700ms cooldown, brief 200ms for audio tracks to settle
+                delay(200L)
             } catch (e: Exception) {
                 Log.w(TAG, "Exception during finishCapture cleanup", e)
             } finally {
@@ -1012,6 +1135,7 @@ class JarvisListenerService : Service() {
                         updateNotification("Jarvis is listening", "Waiting for \"Hey Jarvis\"…")
                         try {
                             startWakeWordEngine()
+                            logTimeline("WAKE_WORD_LOOP_RESUMED")
                             Log.i(TAG, "Wake-word engine resumed successfully after command capture cycle")
                         } catch (e: Exception) {
                             Log.e(TAG, "Failed to start wake-word engine during finishCapture return to idle", e)

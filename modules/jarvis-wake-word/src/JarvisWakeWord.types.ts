@@ -56,3 +56,9 @@ export interface SpeechDoneEvent {
   /** Utterance ID of the completed speech synthesis */
   utteranceId: string;
 }
+
+export interface TimelineEvent {
+  event: string;
+  elapsedMs: number;
+  details: Record<string, any>;
+}

@@ -38,7 +38,7 @@ class JarvisWakeWordModule : Module() {
         Name("JarvisWakeWord")
 
         // Events that JS can subscribe to
-        Events("wakeWordDetected", "onJarvisState", "onCommandTranscript", "onCommandError", "onNativeCommandExecuted", "onSpeechDone")
+        Events("wakeWordDetected", "onJarvisState", "onCommandTranscript", "onCommandError", "onNativeCommandExecuted", "onSpeechDone", "onTimelineEvent")
 
         // Start the Jarvis foreground service
         AsyncFunction("startListening") {
@@ -128,6 +128,18 @@ class JarvisWakeWordModule : Module() {
                     ))
                 } catch (e: Exception) {
                     Log.w(TAG, "Failed to send onSpeechDone event to JS", e)
+                }
+            }
+
+            JarvisListenerService.onTimelineEvent = { event, elapsedMs, details ->
+                try {
+                    sendEvent("onTimelineEvent", mapOf(
+                        "event" to event,
+                        "elapsedMs" to elapsedMs.toDouble(),
+                        "details" to details
+                    ))
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to send onTimelineEvent to JS", e)
                 }
             }
 

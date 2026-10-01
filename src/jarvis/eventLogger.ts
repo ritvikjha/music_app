@@ -24,7 +24,8 @@ export type JarvisEventType =
   | 'LATENCY'
   | 'SERVICE'
   | 'PHONE_CALL'
-  | 'POWER';
+  | 'POWER'
+  | 'TIMELINE';
 
 export interface JarvisLogEvent {
   id: string;

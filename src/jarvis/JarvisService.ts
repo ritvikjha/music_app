@@ -69,6 +69,7 @@ let transcriptSub: EventSubscription | null = null;
 let errorSub: EventSubscription | null = null;
 let nativeCommandSub: EventSubscription | null = null;
 let speechDoneSub: EventSubscription | null = null;
+let timelineSub: EventSubscription | null = null;
 
 // Follow-up context tracking
 export interface FollowUpContext {
@@ -451,6 +452,12 @@ export async function startJarvis(callbacks: JarvisCallbacks = {}): Promise<bool
       registeredCallbacks.onNativeCommand?.(event);
     });
 
+    // 7. Millisecond timeline events for diagnostic tracking
+    timelineSub = mod.addTimelineListener?.((event: { event: string; elapsedMs: number; details: Record<string, any> }) => {
+      console.log(`[Jarvis Timeline][+${event.elapsedMs}ms] ${event.event}`, event.details);
+      logJarvisEvent('TIMELINE', `[+${event.elapsedMs}ms] ${event.event}`, event.details);
+    });
+
     // Start native foreground service
     await mod.startListening();
     logJarvisEvent('SERVICE', 'Jarvis service started');
@@ -504,6 +511,7 @@ function cleanup() {
   errorSub?.remove();
   nativeCommandSub?.remove();
   speechDoneSub?.remove();
+  timelineSub?.remove();
 
   wakeWordSub = null;
   stateSub = null;
@@ -511,6 +519,7 @@ function cleanup() {
   errorSub = null;
   nativeCommandSub = null;
   speechDoneSub = null;
+  timelineSub = null;
   activeFollowUp = null;
   registeredCallbacks = {};
 }
