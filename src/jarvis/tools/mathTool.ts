@@ -19,10 +19,10 @@ export function calculateExpression(input: string): string {
 
   // 2. Word replacements
   expr = expr
-    .replace(/\bplus\b/g, '+')
-    .replace(/\bminus\b/g, '-')
-    .replace(/\btimes\b|\bmultiplied by\b|\bx\b/g, '*')
-    .replace(/\bdivided by\b|\bdivided\b|\bover\b/g, '/')
+    .replace(/\bplus\b|\bjama\b/g, '+')
+    .replace(/\bminus\b|\bkam\b/g, '-')
+    .replace(/\btimes\b|\bmultiplied by\b|\bx\b|\binto\b|\bguna\b/g, '*')
+    .replace(/\bdivided by\b|\bdivided\b|\bover\b|\bbata\b/g, '/')
     .replace(/\bto the power of\b|\bpower\b/g, '**');
 
   // Strip non-math characters (strictly keep numbers, parentheses, decimal point, operators)

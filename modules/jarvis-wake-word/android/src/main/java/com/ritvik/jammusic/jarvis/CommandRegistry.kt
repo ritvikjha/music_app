@@ -645,7 +645,8 @@ object CommandRegistry {
                 id = "CALCULATE",
                 patterns = listOf(
                     Regex("""^(?:calculate|compute|solve|what(?:'s|\s+is))\s+(.+)$"""),
-                    Regex("""^(\d+(?:\.\d+)?)\s*(?:plus|minus|times|divided\s+by|multiplied\s+by|percent\s+of)\s+(\d+(?:\.\d+)?)$"""),
+                    Regex("""^(\d+(?:\.\d+)?)\s*(?:plus|minus|times|into|x|\*|divided\s+by|multiplied\s+by|percent\s+of)\s+(\d+(?:\.\d+)?)$"""),
+                    Regex("""^(?:multiply|multiply\s+karo)\s+(\d+(?:\.\d+)?)\s+(?:by|and|into|with)\s+(\d+(?:\.\d+)?)$"""),
                     Regex("""^(?:hisab\s+karo|calculate\s+karo)\s+(.+)$"""),
                     Regex("""^(\d+(?:\.\d+)?)\s*(?:jama|guna|bata|kam)\s+(\d+(?:\.\d+)?)$""")
                 ),

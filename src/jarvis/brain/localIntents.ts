@@ -920,9 +920,31 @@ const matchTools: PatternMatcher = (text) => {
     };
   }
 
-  // Math: "calculate 15 percent of 400" or "what is 25 plus 14"
-  const mathMatch = text.match(/^(?:calculate|what\s+is)\s+(\d+.*)$/i);
-  if (mathMatch && /[\d+\-*/%]|percent|plus|minus|times|divided/i.test(mathMatch[1])) {
+  // Math: "calculate 15 percent of 400", "what is 25 plus 14", "multiply 5 by 6", "5 into 6"
+  const multiplyMatch = text.match(/^(?:multiply|multiply\s+karo)\s+(\d+(?:\.\d+)?)\s+(?:by|and|into|with)\s+(\d+(?:\.\d+)?)$/i);
+  if (multiplyMatch) {
+    return {
+      intent: 'CALCULATE',
+      slots: { expression: `${multiplyMatch[1]} * ${multiplyMatch[2]}` },
+      confidence: 0.98,
+      spokenReply: 'Calculating that now, sir.',
+      source: 'local',
+    };
+  }
+
+  const directCalcMatch = text.match(/^(\d+(?:\.\d+)?)\s*(?:plus|minus|times|into|x|\*|divided\s+by|divided|over|guna|jama|bata)\s*(\d+(?:\.\d+)?)$/i);
+  if (directCalcMatch) {
+    return {
+      intent: 'CALCULATE',
+      slots: { expression: text },
+      confidence: 0.98,
+      spokenReply: 'Calculating that now, sir.',
+      source: 'local',
+    };
+  }
+
+  const mathMatch = text.match(/^(?:calculate|what\s+is|solve|compute|hisab\s+karo)\s+(\d+.*)$/i);
+  if (mathMatch && /[\d+\-*/%]|percent|plus|minus|times|into|divided|guna|jama|bata/i.test(mathMatch[1])) {
     return {
       intent: 'CALCULATE',
       slots: { expression: mathMatch[1].trim() },

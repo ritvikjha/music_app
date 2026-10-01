@@ -14,6 +14,7 @@ import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.media.AudioRecordingConfiguration
+import android.media.MediaRecorder
 import android.media.ToneGenerator
 import android.os.BatteryManager
 import android.os.Build
@@ -405,16 +406,27 @@ class JarvisListenerService : Service() {
                         val ourSessionId = wakeWordEngine?.currentAudioSessionId ?: 0
                         val allSessions = configs?.map { it.clientAudioSessionId } ?: emptyList()
 
-                        // Check if any external client (excluding our own wake-word AudioRecord) is recording
+                        // Filter out external recording clients:
+                        // If Jarvis is IDLE_LISTENING and running WakeWordEngine, its own AudioRecord
+                        // uses MediaRecorder.AudioSource.MIC (source 1). If there is only 1 MIC stream, it is ours!
                         val externalConfigs = configs?.filter { config ->
-                            val isOurSession = (ourSessionId != 0 && config.clientAudioSessionId == ourSessionId)
-                            !isOurSession && config.clientAudioSessionId != 0
+                            val isOurKnownId = (ourSessionId != 0 && config.clientAudioSessionId == ourSessionId)
+                            if (isOurKnownId) return@filter false
+
+                            val isOurOwnEngineSession = (wakeWordEngine?.isRunning == true || currentState.get() == JarvisState.IDLE_LISTENING) &&
+                                    config.clientAudioSource == MediaRecorder.AudioSource.MIC &&
+                                    (configs.count { it.clientAudioSource == MediaRecorder.AudioSource.MIC } <= 1)
+                            if (isOurOwnEngineSession) return@filter false
+
+                            config.clientAudioSessionId != 0
                         } ?: emptyList()
 
                         // Check if our own session was silenced by the OS due to concurrent priority capture
                         val isOurSessionSilenced = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                             configs?.any { config ->
-                                ourSessionId != 0 && config.clientAudioSessionId == ourSessionId && config.isClientSilenced
+                                val isOurs = (ourSessionId != 0 && config.clientAudioSessionId == ourSessionId) ||
+                                        (config.clientAudioSource == MediaRecorder.AudioSource.MIC && wakeWordEngine?.isRunning == true)
+                                isOurs && config.isClientSilenced
                             } ?: false
                         } else {
                             false
@@ -435,13 +447,22 @@ class JarvisListenerService : Service() {
                                     val currentOurSession = wakeWordEngine?.currentAudioSessionId ?: 0
 
                                     val currentExternal = currentConfigs?.firstOrNull { config ->
-                                        val isOurs = (currentOurSession != 0 && config.clientAudioSessionId == currentOurSession)
-                                        !isOurs && config.clientAudioSessionId != 0
+                                        val isOurKnownId = (currentOurSession != 0 && config.clientAudioSessionId == currentOurSession)
+                                        if (isOurKnownId) return@firstOrNull false
+
+                                        val isOurOwn = (wakeWordEngine?.isRunning == true || currentState.get() == JarvisState.IDLE_LISTENING) &&
+                                                config.clientAudioSource == MediaRecorder.AudioSource.MIC &&
+                                                (currentConfigs.count { it.clientAudioSource == MediaRecorder.AudioSource.MIC } <= 1)
+                                        if (isOurOwn) return@firstOrNull false
+
+                                        config.clientAudioSessionId != 0
                                     }
 
                                     val currentSilenced = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                                         currentConfigs?.any { config ->
-                                            currentOurSession != 0 && config.clientAudioSessionId == currentOurSession && config.isClientSilenced
+                                            val isOurs = (currentOurSession != 0 && config.clientAudioSessionId == currentOurSession) ||
+                                                    (config.clientAudioSource == MediaRecorder.AudioSource.MIC && wakeWordEngine?.isRunning == true)
+                                            isOurs && config.isClientSilenced
                                         } ?: false
                                     } else false
 
