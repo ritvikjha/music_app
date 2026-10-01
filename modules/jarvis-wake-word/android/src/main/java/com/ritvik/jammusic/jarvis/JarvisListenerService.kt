@@ -407,18 +407,19 @@ class JarvisListenerService : Service() {
                         val allSessions = configs?.map { it.clientAudioSessionId } ?: emptyList()
 
                         // Filter out external recording clients:
-                        // If Jarvis is IDLE_LISTENING and running WakeWordEngine, its own AudioRecord
-                        // uses MediaRecorder.AudioSource.MIC (source 1). If there is only 1 MIC stream, it is ours!
+                        // Only treat real communication/call streams as conflicting. Standard MIC (source 1)
+                        // allows concurrent capture on Android 10+ and is also used by Jarvis's own engine.
+                        // We only pause if Android explicitly silences our client or if a call/VoIP stream is active.
                         val externalConfigs = configs?.filter { config ->
                             val isOurKnownId = (ourSessionId != 0 && config.clientAudioSessionId == ourSessionId)
                             if (isOurKnownId) return@filter false
 
-                            val isOurOwnEngineSession = (wakeWordEngine?.isRunning == true || currentState.get() == JarvisState.IDLE_LISTENING) &&
-                                    config.clientAudioSource == MediaRecorder.AudioSource.MIC &&
-                                    (configs.count { it.clientAudioSource == MediaRecorder.AudioSource.MIC } <= 1)
-                            if (isOurOwnEngineSession) return@filter false
+                            val isConflictingSource = config.clientAudioSource == MediaRecorder.AudioSource.VOICE_COMMUNICATION ||
+                                    config.clientAudioSource == MediaRecorder.AudioSource.VOICE_CALL ||
+                                    config.clientAudioSource == MediaRecorder.AudioSource.VOICE_DOWNLINK ||
+                                    config.clientAudioSource == MediaRecorder.AudioSource.VOICE_UPLINK
 
-                            config.clientAudioSessionId != 0
+                            isConflictingSource && config.clientAudioSessionId != 0
                         } ?: emptyList()
 
                         // Check if our own session was silenced by the OS due to concurrent priority capture
@@ -450,12 +451,12 @@ class JarvisListenerService : Service() {
                                         val isOurKnownId = (currentOurSession != 0 && config.clientAudioSessionId == currentOurSession)
                                         if (isOurKnownId) return@firstOrNull false
 
-                                        val isOurOwn = (wakeWordEngine?.isRunning == true || currentState.get() == JarvisState.IDLE_LISTENING) &&
-                                                config.clientAudioSource == MediaRecorder.AudioSource.MIC &&
-                                                (currentConfigs.count { it.clientAudioSource == MediaRecorder.AudioSource.MIC } <= 1)
-                                        if (isOurOwn) return@firstOrNull false
+                                        val isConflicting = config.clientAudioSource == MediaRecorder.AudioSource.VOICE_COMMUNICATION ||
+                                                config.clientAudioSource == MediaRecorder.AudioSource.VOICE_CALL ||
+                                                config.clientAudioSource == MediaRecorder.AudioSource.VOICE_DOWNLINK ||
+                                                config.clientAudioSource == MediaRecorder.AudioSource.VOICE_UPLINK
 
-                                        config.clientAudioSessionId != 0
+                                        isConflicting && config.clientAudioSessionId != 0
                                     }
 
                                     val currentSilenced = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -469,7 +470,7 @@ class JarvisListenerService : Service() {
                                     if ((currentExternal != null || currentSilenced) && !isCallActive && currentState.get() == JarvisState.IDLE_LISTENING) {
                                         val reason = when {
                                             currentSilenced -> "system_silenced_concurrent_capture"
-                                            currentExternal != null -> "external_mic_recording:session_${currentExternal.clientAudioSessionId}_source_${currentExternal.clientAudioSource}"
+                                            currentExternal != null -> "external_call_recording:session_${currentExternal.clientAudioSessionId}_source_${currentExternal.clientAudioSource}"
                                             else -> "external_mic_in_use"
                                         }
                                         Log.i(TAG, "External recording confirmed after 500ms dwell time ($reason) — pausing Jarvis")
