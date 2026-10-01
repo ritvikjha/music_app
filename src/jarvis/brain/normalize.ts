@@ -76,6 +76,10 @@ const ASR_CORRECTIONS: [RegExp, string][] = [
   [/\b(kesaria)\b/g, 'kesariya'],
   [/\b(arijeet|arjit)\b/g, 'arijit'],
   [/\b(cue|que)\b/g, 'queue'],
+  [/\b(kr\s*rha|kar\s*rha)\b/g, 'kar raha'],
+  [/\b(krna)\b/g, 'karna'],
+  [/\b(krdo)\b/g, 'kar do'],
+  [/\b(dheeme|dheema)\b/g, 'dheere'],
 ];
 
 // Conversational filler phrases to strip from beginnings/ends of commands
@@ -83,9 +87,11 @@ const FILLERS = [
   /^(hey|hello|hi|yo)\s+jarvis\b/i,
   /^(jarvis|hey|hello|hi)\b/i,
   /\bjarvis\b/i,
-  /^(please|can you|could you|would you|will you|kindly|just)\b/i,
-  /^(kripya|zara|bhai|yaar|are)\b/i,
-  /\b(please|kripya|bhai|yaar|na)$/i,
+  /^(?:mai|main)\s+(?:kuch\s+)?kaam\s+(?:k(?:a)?r\s+rh[a|e]\s*(?:hoon|hu)?|kar\s+raha\s+hoon)\b/i,
+  /^(?:i(?:'m|\s+am)\s+(?:doing\s+some\s+work|working|busy))\b/i,
+  /^(?:please|can you|could you|would you|will you|kindly|just)\b/i,
+  /^(?:kripya|zara|bhai|yaar|are|thoda|thodi|suno|ek\s+kaam\s+karo)\b/i,
+  /\b(please|kripya|bhai|yaar|na|karna|krna|kardo|krdo|de)$/i,
 ];
 
 /**

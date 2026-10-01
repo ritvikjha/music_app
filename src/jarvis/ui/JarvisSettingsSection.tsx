@@ -18,6 +18,7 @@ import {
   TouchableOpacity,
   StyleSheet,
   Alert,
+  AppState,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, borderRadius } from '../../theme';
@@ -34,6 +35,7 @@ import {
   setOnlyListenWhileCharging,
   getSelectedWakeModel,
   setSelectedWakeModel,
+  type WakePhraseModel,
   getVoicePersona,
   setVoicePersona,
   type VoicePersona,
@@ -41,6 +43,9 @@ import {
   openAccessibilitySettings,
   isWhatsAppAutoSendEnabled,
   setWhatsAppAutoSendEnabled,
+  startAutoScroll,
+  stopAutomation,
+  isAutomationRunning,
 } from '../JarvisService';
 import { JarvisPrivacyModal } from './JarvisPrivacyModal';
 
@@ -59,12 +64,27 @@ export const JarvisSettingsSection: React.FC<JarvisSettingsSectionProps> = ({
   const [beepOnly, setBeepOnlyMode] = useState(false);
   const [language, setLanguage] = useState('en-IN');
   const [chargingOnly, setChargingOnly] = useState(false);
-  const [wakeModel, setWakeModelState] = useState<'hey_jarvis' | 'hello_jarvis'>('hey_jarvis');
+  const [wakeModel, setWakeModelState] = useState<WakePhraseModel>('both');
   const [voicePersona, setVoicePersonaState] = useState<VoicePersona>('stark_uk');
   const [whatsAppAutoSend, setWhatsAppAutoSend] = useState(false);
   const [showPrivacyModal, setShowPrivacyModal] = useState(false);
+  const [a11yActive, setA11yActive] = useState(false);
+  const [isAutoScrollingActive, setIsAutoScrollingActive] = useState(false);
 
   useEffect(() => {
+    const checkA11y = () => {
+      const active = isAccessibilityServiceActive();
+      setA11yActive(active);
+      setIsAutoScrollingActive(isAutomationRunning());
+    };
+
+    checkA11y();
+    const sub = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        checkA11y();
+      }
+    });
+
     (async () => {
       try {
         const sens = await getWakeSensitivity();
@@ -89,12 +109,15 @@ export const JarvisSettingsSection: React.FC<JarvisSettingsSectionProps> = ({
         setVoicePersonaState(vp);
 
         const autoSend = await isWhatsAppAutoSendEnabled();
-        const a11yActive = isAccessibilityServiceActive();
-        setWhatsAppAutoSend(autoSend && a11yActive);
+        const active = isAccessibilityServiceActive();
+        setA11yActive(active);
+        setWhatsAppAutoSend(autoSend && active);
       } catch (e) {
         console.warn('[JarvisSettingsSection] init error:', e);
       }
     })();
+
+    return () => sub.remove();
   }, []);
 
   const handleToggleWhatsAppAutoSend = async (val: boolean) => {
@@ -166,10 +189,15 @@ export const JarvisSettingsSection: React.FC<JarvisSettingsSectionProps> = ({
     showToast(val ? 'Jarvis will only listen while charging' : 'Always-on battery listening enabled', 'info');
   };
 
-  const handleSelectWakeModel = async (model: 'hey_jarvis' | 'hello_jarvis') => {
+  const handleSelectWakeModel = async (model: WakePhraseModel) => {
     setWakeModelState(model);
     await setSelectedWakeModel(model);
-    const label = model === 'hello_jarvis' ? '"Hello Jarvis"' : '"Hey Jarvis" (more reliable)';
+    const label =
+      model === 'both'
+        ? '"Hey" or "Hello Jarvis" (Dual)'
+        : model === 'hello_jarvis'
+        ? '"Hello Jarvis"'
+        : '"Hey Jarvis" (more reliable)';
     showToast(`Wake phrase set to ${label}`, 'info');
   };
 
@@ -270,39 +298,63 @@ export const JarvisSettingsSection: React.FC<JarvisSettingsSectionProps> = ({
           </View>
         </View>
 
-        <View style={styles.phraseSelectorRow}>
+        <View style={styles.phraseSelectorCol}>
           <TouchableOpacity
-            style={[styles.phraseChip, wakeModel === 'hello_jarvis' && styles.phraseChipSelected]}
-            onPress={() => handleSelectWakeModel('hello_jarvis')}
+            style={[styles.phraseChipWide, wakeModel === 'both' && styles.phraseChipSelected]}
+            onPress={() => handleSelectWakeModel('both')}
             activeOpacity={0.7}
           >
-            <Ionicons
-              name={wakeModel === 'hello_jarvis' ? 'radio-button-on' : 'radio-button-off'}
-              size={15}
-              color={wakeModel === 'hello_jarvis' ? '#F43F5E' : colors.textSecondary}
-            />
-            <Text style={[styles.phraseChipText, wakeModel === 'hello_jarvis' && styles.phraseChipTextSelected]}>
-              "Hello Jarvis"
-            </Text>
+            <View style={styles.phraseChipContent}>
+              <Ionicons
+                name={wakeModel === 'both' ? 'radio-button-on' : 'radio-button-off'}
+                size={15}
+                color={wakeModel === 'both' ? '#F43F5E' : colors.textSecondary}
+              />
+              <Text style={[styles.phraseChipText, wakeModel === 'both' && styles.phraseChipTextSelected]}>
+                "Hey" & "Hello Jarvis" (Dual / Both)
+              </Text>
+            </View>
+            <View style={styles.recommendedBadge}>
+              <Text style={styles.recommendedBadgeText}>Default</Text>
+            </View>
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[styles.phraseChip, wakeModel === 'hey_jarvis' && styles.phraseChipSelected]}
-            onPress={() => handleSelectWakeModel('hey_jarvis')}
-            activeOpacity={0.7}
-          >
-            <Ionicons
-              name={wakeModel === 'hey_jarvis' ? 'radio-button-on' : 'radio-button-off'}
-              size={15}
-              color={wakeModel === 'hey_jarvis' ? '#F43F5E' : colors.textSecondary}
-            />
-            <Text style={[styles.phraseChipText, wakeModel === 'hey_jarvis' && styles.phraseChipTextSelected]}>
-              "Hey Jarvis" (more reliable)
-            </Text>
-          </TouchableOpacity>
+          <View style={styles.phraseSelectorRow}>
+            <TouchableOpacity
+              style={[styles.phraseChip, wakeModel === 'hey_jarvis' && styles.phraseChipSelected]}
+              onPress={() => handleSelectWakeModel('hey_jarvis')}
+              activeOpacity={0.7}
+            >
+              <Ionicons
+                name={wakeModel === 'hey_jarvis' ? 'radio-button-on' : 'radio-button-off'}
+                size={15}
+                color={wakeModel === 'hey_jarvis' ? '#F43F5E' : colors.textSecondary}
+              />
+              <Text style={[styles.phraseChipText, wakeModel === 'hey_jarvis' && styles.phraseChipTextSelected]}>
+                "Hey Jarvis"
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.phraseChip, wakeModel === 'hello_jarvis' && styles.phraseChipSelected]}
+              onPress={() => handleSelectWakeModel('hello_jarvis')}
+              activeOpacity={0.7}
+            >
+              <Ionicons
+                name={wakeModel === 'hello_jarvis' ? 'radio-button-on' : 'radio-button-off'}
+                size={15}
+                color={wakeModel === 'hello_jarvis' ? '#F43F5E' : colors.textSecondary}
+              />
+              <Text style={[styles.phraseChipText, wakeModel === 'hello_jarvis' && styles.phraseChipTextSelected]}>
+                "Hello Jarvis"
+              </Text>
+            </TouchableOpacity>
+          </View>
         </View>
         <Text style={styles.phraseSubtext}>
-          {wakeModel === 'hello_jarvis'
+          {wakeModel === 'both'
+            ? 'Concurrent listening: wake up naturally with "Hey Jarvis", "Hey", or "Hello Jarvis".'
+            : wakeModel === 'hello_jarvis'
             ? 'Custom trained model for "Hello Jarvis" phrase.'
             : 'Pre-trained benchmark model with highest acoustic noise immunity.'}
         </Text>
@@ -449,29 +501,100 @@ export const JarvisSettingsSection: React.FC<JarvisSettingsSectionProps> = ({
         />
       </View>
 
-      {/* 6. Hands-Free WhatsApp Auto-Send */}
-      <View style={styles.settingRow}>
-        <View style={styles.settingRowLeft}>
-          <Ionicons
-            name="logo-whatsapp"
-            size={18}
-            color={whatsAppAutoSend ? '#25D366' : colors.textSecondary}
-          />
-          <View style={{ flex: 1 }}>
-            <Text style={styles.rowTitle}>Hands-Free WhatsApp Auto-Send</Text>
-            <Text style={styles.rowSubtitle}>
-              {whatsAppAutoSend
-                ? 'Auto-clicks Send and returns back to Jam'
-                : 'Opens chat without auto-sending'}
+      {/* 6. Level 6: General App UI Automation & Accessibility */}
+      <View style={styles.settingBlock}>
+        <View style={styles.blockHeader}>
+          <View style={styles.blockHeaderLeft}>
+            <Ionicons name="hardware-chip-outline" size={18} color="#818CF8" />
+            <Text style={styles.blockTitle}>App UI Automation (Level 6)</Text>
+          </View>
+          <View style={[styles.statusBadge, a11yActive ? styles.statusBadgeActive : styles.statusBadgeInactive]}>
+            <Ionicons
+              name={a11yActive ? 'checkmark-circle' : 'warning-outline'}
+              size={12}
+              color={a11yActive ? '#10B981' : '#F59E0B'}
+            />
+            <Text style={[styles.statusBadgeText, { color: a11yActive ? '#10B981' : '#F59E0B' }]}>
+              {a11yActive ? 'Active' : 'Setup Required'}
             </Text>
           </View>
         </View>
-        <Switch
-          value={whatsAppAutoSend}
-          onValueChange={handleToggleWhatsAppAutoSend}
-          trackColor={{ false: '#3E3E3E', true: '#25D366' }}
-          thumbColor="#FFFFFF"
-        />
+
+        <Text style={styles.automationDescription}>
+          Enables Jarvis to control other apps hands-free: auto-scroll reels & feeds ("scroll reels every 10 seconds"), launch installed apps, tap elements, and hands-free WhatsApp messaging.
+        </Text>
+
+        {!a11yActive ? (
+          <TouchableOpacity
+            style={styles.enableA11yBtn}
+            onPress={() => {
+              openAccessibilitySettings();
+              showToast('Turn ON "Jarvis Automation" under Downloaded Apps/Accessibility', 'info');
+            }}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="open-outline" size={16} color="#FFF" />
+            <Text style={styles.enableA11yBtnText}>Enable in Android Accessibility Settings</Text>
+          </TouchableOpacity>
+        ) : (
+          <View style={styles.automationActionRow}>
+            <TouchableOpacity
+              style={styles.testScrollBtn}
+              onPress={() => {
+                if (isAutoScrollingActive) {
+                  stopAutomation();
+                  setIsAutoScrollingActive(false);
+                  showToast('Auto-scroll stopped', 'info');
+                } else {
+                  startAutoScroll('up', 5, 15);
+                  setIsAutoScrollingActive(true);
+                  showToast('Testing auto-scroll for 15s (say "stop" anytime)', 'success');
+                }
+              }}
+              activeOpacity={0.7}
+            >
+              <Ionicons
+                name={isAutoScrollingActive ? 'stop-circle-outline' : 'swap-vertical-outline'}
+                size={16}
+                color={isAutoScrollingActive ? '#F43F5E' : '#818CF8'}
+              />
+              <Text style={[styles.testScrollBtnText, isAutoScrollingActive && { color: '#F43F5E' }]}>
+                {isAutoScrollingActive ? 'Stop Auto-Scroll' : 'Test Auto-Scroll (15s)'}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.manageA11yBtn}
+              onPress={openAccessibilitySettings}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.manageA11yBtnText}>Settings</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        <View style={styles.subSettingRow}>
+          <View style={styles.settingRowLeft}>
+            <Ionicons
+              name="logo-whatsapp"
+              size={18}
+              color={whatsAppAutoSend && a11yActive ? '#25D366' : colors.textSecondary}
+            />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.rowTitle}>Hands-Free WhatsApp Auto-Send</Text>
+              <Text style={styles.rowSubtitle}>
+                Auto-clicks Send and returns back to Jam
+              </Text>
+            </View>
+          </View>
+          <Switch
+            value={whatsAppAutoSend && a11yActive}
+            onValueChange={handleToggleWhatsAppAutoSend}
+            disabled={!a11yActive}
+            trackColor={{ false: '#3E3E3E', true: '#25D366' }}
+            thumbColor="#FFFFFF"
+          />
+        </View>
       </View>
 
       {/* 7. Privacy & Architecture Disclosure Button */}
@@ -605,10 +728,41 @@ const styles = StyleSheet.create({
     color: colors.accent,
     fontWeight: '800',
   },
+  phraseSelectorCol: {
+    gap: 8,
+    marginTop: 4,
+  },
+  phraseChipWide: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: borderRadius.sm,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  phraseChipContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  recommendedBadge: {
+    backgroundColor: 'rgba(244, 63, 94, 0.2)',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  recommendedBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#F43F5E',
+    letterSpacing: 0.3,
+  },
   phraseSelectorRow: {
     flexDirection: 'row',
     gap: 8,
-    marginTop: 4,
   },
   phraseChip: {
     flex: 1,
@@ -707,6 +861,97 @@ const styles = StyleSheet.create({
     color: '#64748B',
     marginTop: 2,
     textAlign: 'center',
+  },
+  statusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: borderRadius.sm,
+  },
+  statusBadgeActive: {
+    backgroundColor: 'rgba(16, 185, 129, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.3)',
+  },
+  statusBadgeInactive: {
+    backgroundColor: 'rgba(245, 158, 11, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.3)',
+  },
+  statusBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+  },
+  automationDescription: {
+    fontSize: 12,
+    color: '#94A3B8',
+    lineHeight: 17,
+    marginTop: 4,
+    marginBottom: 8,
+  },
+  enableA11yBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    backgroundColor: '#6366F1',
+    borderRadius: borderRadius.sm,
+    marginBottom: 8,
+  },
+  enableA11yBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  automationActionRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 8,
+  },
+  testScrollBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 9,
+    paddingHorizontal: 10,
+    backgroundColor: 'rgba(129, 140, 248, 0.12)',
+    borderRadius: borderRadius.sm,
+    borderWidth: 1,
+    borderColor: 'rgba(129, 140, 248, 0.25)',
+  },
+  testScrollBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#818CF8',
+  },
+  manageA11yBtn: {
+    paddingVertical: 9,
+    paddingHorizontal: 12,
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    borderRadius: borderRadius.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  manageA11yBtnText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.textSecondary,
+  },
+  subSettingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 255, 255, 0.05)',
+    marginTop: 4,
   },
   debugBtn: {
     flexDirection: 'row',

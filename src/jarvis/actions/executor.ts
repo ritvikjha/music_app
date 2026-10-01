@@ -856,6 +856,26 @@ async function executeLiveIntent(
       };
     }
 
+    case 'GREETING': {
+      return {
+        ok: true,
+        spokenReply: intentResult.spokenReply || 'At your service, sir. How can I help you?',
+      };
+    }
+
+    case 'APP_AUTOMATION':
+    case 'START_AUTO_SCROLL':
+    case 'STOP_AUTOMATION':
+    case 'TAP_ELEMENT':
+    case 'TYPE_TEXT': {
+      const toolRes = await executeTool(intent, slots || {});
+      return {
+        ok: true,
+        spokenReply: toolRes.spokenReply,
+        toast: { message: 'Jarvis Automation', type: 'info' },
+      };
+    }
+
     case 'GET_WEATHER':
     case 'GET_TIME':
     case 'GET_DATE':
@@ -1219,6 +1239,22 @@ async function executeFallbackIntent(intentResult: IntentResult): Promise<Action
       }
       await saveNote(`reminder_${Date.now()}`, task);
       return { ok: true, spokenReply: intentResult.spokenReply || `Reminder set for ${task}, sir.` };
+    }
+
+    case 'GREETING': {
+      return {
+        ok: true,
+        spokenReply: intentResult.spokenReply || 'At your service, sir. How can I help you?',
+      };
+    }
+
+    case 'APP_AUTOMATION':
+    case 'START_AUTO_SCROLL':
+    case 'STOP_AUTOMATION':
+    case 'TAP_ELEMENT':
+    case 'TYPE_TEXT': {
+      const toolRes = await executeTool(intent, slots || {});
+      return { ok: true, spokenReply: toolRes.spokenReply };
     }
 
     case 'GET_WEATHER':

@@ -62,6 +62,7 @@ class JarvisTtsHelper(private val context: Context) : TextToSpeech.OnInitListene
 
     @Volatile
     var voicePersona: String = PERSONA_STARK
+        private set
 
     /** Callback invoked whenever an utterance finishes speaking or errors out */
     var onSpeechDoneCallback: ((utteranceId: String) -> Unit)? = null

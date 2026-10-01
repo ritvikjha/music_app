@@ -9,6 +9,7 @@ import { calculateExpression } from './mathTool';
 import { convertUnits } from './unitConvertTool';
 import { fetchWeather } from './weatherTool';
 import { searchWebKnowledge } from './webSearchTool';
+import { executeAppAutomation } from './appAutomationTool';
 
 export interface ToolExecutionResult {
   spokenReply: string;
@@ -17,6 +18,27 @@ export interface ToolExecutionResult {
 
 export async function executeTool(name: string, slots: Record<string, any>): Promise<ToolExecutionResult> {
   switch (name) {
+    case 'APP_AUTOMATION':
+    case 'START_AUTO_SCROLL':
+    case 'STOP_AUTOMATION':
+    case 'TAP_ELEMENT':
+    case 'TYPE_TEXT': {
+      const autoRes = await executeAppAutomation({
+        ...slots,
+        action:
+          name === 'START_AUTO_SCROLL'
+            ? 'scroll'
+            : name === 'STOP_AUTOMATION'
+            ? 'stop'
+            : name === 'TAP_ELEMENT'
+            ? 'tap'
+            : name === 'TYPE_TEXT'
+            ? 'type'
+            : slots?.action || 'scroll',
+      });
+      return { spokenReply: autoRes.spokenReply, data: autoRes.data };
+    }
+
     case 'GET_WEATHER': {
       const city = slots?.location || slots?.city || slots?.query;
       const weatherText = await fetchWeather(city);
@@ -58,4 +80,13 @@ export async function executeTool(name: string, slots: Record<string, any>): Pro
   }
 }
 
-export { getCurrentTime, getCurrentDate, getTimeOfDay, calculateExpression, convertUnits, fetchWeather, searchWebKnowledge };
+export {
+  getCurrentTime,
+  getCurrentDate,
+  getTimeOfDay,
+  calculateExpression,
+  convertUnits,
+  fetchWeather,
+  searchWebKnowledge,
+  executeAppAutomation,
+};

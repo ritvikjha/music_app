@@ -474,6 +474,49 @@ class JarvisWakeWordModule : Module() {
                 "extraData" to (result.extraData ?: emptyMap<String, String>())
             )
         }
+
+        // ==========================================
+        // Level 6: General App UI Automation Bridge
+        // ==========================================
+
+        Function("openApp") { appName: String ->
+            val context = appContext.reactContext ?: return@Function false
+            val res = JarvisAccessibilityService.openApp(context, appName)
+            res.success
+        }
+
+        Function("startAutoScroll") { direction: String, intervalSeconds: Double, durationSeconds: Int ->
+            JarvisAccessibilityService.startAutoScroll(
+                direction = direction,
+                intervalSeconds = intervalSeconds,
+                durationSeconds = durationSeconds
+            )
+        }
+
+        Function("stopAutomation") {
+            JarvisAccessibilityService.stopAutomation()
+        }
+
+        Function("isAutomationRunning") {
+            JarvisAccessibilityService.isAutoScrolling
+        }
+
+        Function("tapElement") { query: String ->
+            JarvisAccessibilityService.tapElement(query)
+        }
+
+        Function("typeText") { query: String, text: String ->
+            JarvisAccessibilityService.typeText(query, text)
+        }
+
+        Function("getForegroundApp") {
+            val context = appContext.reactContext ?: return@Function emptyMap<String, String>()
+            JarvisAccessibilityService.getForegroundAppInfo(context)
+        }
+
+        Function("inspectScreen") {
+            JarvisAccessibilityService.inspectScreen()
+        }
     }
 }
 

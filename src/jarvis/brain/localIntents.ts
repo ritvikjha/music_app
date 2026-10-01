@@ -127,14 +127,17 @@ const matchVolumeSet: PatternMatcher = (text) => {
 
 const matchVolumeUp: PatternMatcher = (text) => {
   const isUp =
-    /^(volume up|louder|turn it up|increase volume|raise volume|boost volume|more volume|up the volume)$/i.test(text) ||
-    /^(awaaz badhao|awaaz tez karo|thoda tez karo|volume badha do|awaaz unchi karo|awaaz badha)$/i.test(text);
+    /(?:volume\s+(?:up|increase|raise|high|more)|turn\s+(?:it\s+)?up|pump\s+it\s+up)/i.test(text) ||
+    /(?:music\s+ka\s+|sound\s+ka\s+|gaane\s+ka\s+)?volume\s*(?:badhao|tez|unche|high|up)/i.test(text) ||
+    /(?:awaaz|aawaz)\s*(?:badhao|tez|unche|loud|up)/i.test(text) ||
+    /(?:music|sound|gaana)\s*(?:tez|unche)\s*(?:karo|karna|krna)/i.test(text) ||
+    /(?:आवाज़|वॉल्यूम)\s*(?:बढ़ाओ|तेज़|अप)/i.test(text);
 
   if (isUp) {
     return {
       intent: 'VOLUME_UP',
       slots: {},
-      confidence: 0.96,
+      confidence: 0.98,
       spokenReply: 'Increasing volume.',
       source: 'local',
     };
@@ -144,14 +147,18 @@ const matchVolumeUp: PatternMatcher = (text) => {
 
 const matchVolumeDown: PatternMatcher = (text) => {
   const isDown =
-    /^(volume down|softer|turn it down|decrease volume|lower volume|quieter|less volume|down the volume)$/i.test(text) ||
-    /^(awaaz kam karo|awaaz dheere karo|thoda dheere karo|volume ghatao|awaaz kam kardo|awaaz dheemi karo)$/i.test(text);
+    /(?:volume\s+(?:down|decrease|lower|less|softer|quieter)|turn\s+(?:it\s+)?down|down\s+the\s+volume)/i.test(text) ||
+    /(?:music\s+ka\s+|sound\s+ka\s+|gaane\s+ka\s+)?volume\s*(?:kam|ghatao|dheemi|dheere|down|low|slow)/i.test(text) ||
+    /(?:awaaz|aawaz)\s*(?:kam|dheemi|dheere|ghatao|slow)/i.test(text) ||
+    /(?:music|sound|gaana)\s*(?:dheema|dheere|kam|slow)/i.test(text) ||
+    /(?:volume|awaaz)\s+thod[ai]\s+(?:kam|dheere|dheemi)/i.test(text) ||
+    /(?:आवाज़|वॉल्यूम)\s*(?:कम|धीमी|डाउन)/i.test(text);
 
   if (isDown) {
     return {
       intent: 'VOLUME_DOWN',
       slots: {},
-      confidence: 0.96,
+      confidence: 0.98,
       spokenReply: 'Lowering volume.',
       source: 'local',
     };
@@ -974,8 +981,133 @@ const matchStatusReport: PatternMatcher = (text) => {
   return null;
 };
 
+// ==========================================
+// Greetings & Attention Acknowledgments
+// ("Hey", "Hey Jarvis", "Hello Jarvis", "Are you there", etc.)
+// ==========================================
+const matchGreetings: PatternMatcher = (text) => {
+  const clean = text.trim().toLowerCase().replace(/[?.!,;]+$/, '');
+  if (
+    /^(?:hey|hello|hi|namaste|pranam)(?:\s+(?:jarvis|bro|bhai|buddy|there))?$/i.test(clean) ||
+    /^(?:hey|hello|hi|jarvis)$/i.test(clean) ||
+    /^(?:are\s+you\s+there|you\s+there|you\s+listening)$/i.test(clean) ||
+    /^(?:sun\s*rahe\s*ho|sun\s*bhai|kya\s*haal\s*hai|kuch\s*kaam\s*hai)$/i.test(clean) ||
+    /^(?:aur\s*batao|kya\s*chal\s*raha\s*hai|kaise\s*ho)$/i.test(clean)
+  ) {
+    const replies = [
+      'At your service, sir. How can I help you?',
+      'Online and listening, boss.',
+      'Yes sir, what can I do for you?',
+      'Haanji boliye, kya kaam hai?',
+      'Always here, sir. How may I assist?',
+    ];
+    return {
+      intent: 'GREETING',
+      slots: {},
+      confidence: 0.99,
+      spokenReply: replies[Math.floor(Math.random() * replies.length)],
+      source: 'local',
+    };
+  }
+  return null;
+};
+
+// ==========================================
+// Level 6: General App UI Automation Matcher
+// ==========================================
+
+const matchAutomation: PatternMatcher = (text) => {
+  // 1. Stop automation / scrolling
+  if (
+    /^(?:jarvis\s+)?(?:stop\s+automation|stop\s+scrolling|scroll\s+band\s*karo|stop\s+scroll|stop|rok\s*do|ruko|band\s*karo|stop\s+it|ruko\s+bhai|ruk\s*jao|pause\s+scroll)$/i.test(
+      text
+    )
+  ) {
+    return {
+      intent: 'STOP_AUTOMATION',
+      slots: {},
+      confidence: 0.99,
+      spokenReply: 'Automation stopped, sir.',
+      source: 'local',
+    };
+  }
+
+  // 2. Open App and auto-scroll (e.g., "open instagram and scroll reels every 15 seconds")
+  const openAndScrollMatch = text.match(
+    /^(?:open|launch)\s+([a-zA-Z0-9\s]+?)\s+(?:and|fir|aur|then)\s+(?:start\s+)?auto\s*scroll(?:\s+(?:reels|shorts|feed|tiktok))?(?:\s+(?:every|har)\s+(\d+)\s*(?:seconds|second|sec|s)?)?$/i
+  );
+  if (openAndScrollMatch) {
+    const app = openAndScrollMatch[1].trim();
+    const interval = openAndScrollMatch[2] ? parseInt(openAndScrollMatch[2], 10) : 10;
+    return {
+      intent: 'APP_AUTOMATION',
+      slots: {
+        appName: app,
+        action: 'scroll',
+        direction: 'up',
+        intervalSeconds: interval,
+      },
+      confidence: 0.98,
+      spokenReply: `Opening ${app} and auto-scrolling every ${interval} seconds, sir. Say 'stop' anytime.`,
+      source: 'local',
+    };
+  }
+
+  // 3. Auto-scroll current screen / app
+  const scrollMatch =
+    text.match(
+      /^(?:start\s+)?auto\s*scroll(?:\s+(?:reels|shorts|feed|tiktok))?(?:\s+(?:every|har)\s+(\d+)\s*(?:seconds|second|sec|s)?)?$/i
+    ) ||
+    text.match(/^(?:scroll|swiping)\s+(?:shuru\s*karo|chalu\s*karo)(?:\s+(\d+)\s*(?:second|sec)\s*me)?$/i);
+
+  if (scrollMatch) {
+    const interval = scrollMatch[1] ? parseInt(scrollMatch[1], 10) : 10;
+    return {
+      intent: 'START_AUTO_SCROLL',
+      slots: {
+        direction: 'up',
+        intervalSeconds: interval,
+      },
+      confidence: 0.96,
+      spokenReply: `Auto-scrolling every ${interval} seconds, sir. Say 'stop' to halt.`,
+      source: 'local',
+    };
+  }
+
+  // 4. Tap element
+  const tapMatch = text.match(/^(?:tap|click|press|select)\s+(?:on\s+)?(.+)$/i);
+  if (tapMatch) {
+    const target = tapMatch[1].trim();
+    return {
+      intent: 'TAP_ELEMENT',
+      slots: { query: target },
+      confidence: 0.92,
+      spokenReply: `Tapping ${target}, sir.`,
+      source: 'local',
+    };
+  }
+
+  // 5. Type text
+  const typeMatch = text.match(/^(?:type|enter|input|write)\s+(.+?)(?:\s+(?:in|into|on)\s+(.+))?$/i);
+  if (typeMatch) {
+    const textToType = typeMatch[1].trim();
+    const field = (typeMatch[2] || '').trim();
+    return {
+      intent: 'TYPE_TEXT',
+      slots: { text: textToType, query: field },
+      confidence: 0.92,
+      spokenReply: field ? `Typing "${textToType}" into ${field}, sir.` : `Typing "${textToType}", sir.`,
+      source: 'local',
+    };
+  }
+
+  return null;
+};
+
 // Ordered list of matcher functions (first match wins)
 const MATCHERS: PatternMatcher[] = [
+  matchGreetings,
+  matchAutomation,
   matchStarkEasterEggs,
   matchStarkProtocols,
   matchMorningBriefing,

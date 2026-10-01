@@ -729,17 +729,22 @@ class JarvisListenerService : Service() {
             return
         }
 
-        val isHello = selectedWakeModel.contains("hello")
-        val modelAsset = if (isHello) "hello_jarvis.onnx" else "hey_jarvis.onnx"
-        val modelDisplayName = if (isHello) "Hello Jarvis" else "Hey Jarvis"
-
-        val models = listOf(
-            WakeWordModel(
-                name = modelDisplayName,
-                assetPath = modelAsset,
-                threshold = wakeWordThreshold
-            )
-        )
+        val models = mutableListOf<WakeWordModel>()
+        when (selectedWakeModel) {
+            "hello_jarvis" -> {
+                models.add(WakeWordModel("Hello Jarvis", "hello_jarvis.onnx", threshold = wakeWordThreshold))
+            }
+            "hey_jarvis" -> {
+                models.add(WakeWordModel("Hey Jarvis", "hey_jarvis.onnx", threshold = wakeWordThreshold))
+                models.add(WakeWordModel("Hey", "hey_jarvis.onnx", threshold = (wakeWordThreshold * 0.60f).coerceAtLeast(0.22f)))
+            }
+            else -> {
+                // "both" / default: load models so "Hey Jarvis", "Hello Jarvis", and "Hey" all wake Jarvis!
+                models.add(WakeWordModel("Hey Jarvis", "hey_jarvis.onnx", threshold = wakeWordThreshold))
+                models.add(WakeWordModel("Hello Jarvis", "hello_jarvis.onnx", threshold = wakeWordThreshold))
+                models.add(WakeWordModel("Hey", "hey_jarvis.onnx", threshold = (wakeWordThreshold * 0.60f).coerceAtLeast(0.22f)))
+            }
+        }
 
         try {
             wakeWordEngine = WakeWordEngine(
@@ -750,7 +755,8 @@ class JarvisListenerService : Service() {
             )
 
             wakeWordEngine?.start()
-            Log.i(TAG, "WakeWordEngine started ($modelDisplayName, asset=$modelAsset, threshold=$wakeWordThreshold)")
+            val loadedNames = models.joinToString { it.name }
+            Log.i(TAG, "WakeWordEngine started with models: [$loadedNames], default threshold=$wakeWordThreshold")
 
             serviceScope.launch {
                 wakeWordEngine?.detections?.collectLatest { detection ->
@@ -885,11 +891,17 @@ class JarvisListenerService : Service() {
                 if (!useFallbackLang) {
                     val langTag = when (preferredLanguage) {
                         "hi-IN" -> "hi-IN"
-                        "auto" -> "en-IN" // en-IN handles Indian English & Hinglish best
-                        else -> preferredLanguage.ifEmpty { "en-IN" }
+                        else -> "en-IN" // en-IN handles Indian English & Hinglish
                     }
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE, langTag)
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, langTag)
+
+                    // Multilingual English + Hindi hints for seamless bilingual code-switching
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        putExtra("android.speech.extra.ENABLE_MULTILINGUAL_DETECTION", true)
+                        putExtra("android.speech.extra.LANGUAGE_DETECTION_ALLOWED_LANGUAGES", arrayListOf("en-IN", "hi-IN", "en-US"))
+                    }
+                    putExtra("android.speech.extra.ADDITIONAL_LANGUAGES", arrayOf("en-IN", "hi-IN"))
                 }
                 putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
                 // Note: EXTRA_PREFER_OFFLINE omitted to allow online or offline recognition without error 13

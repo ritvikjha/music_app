@@ -203,8 +203,13 @@ object CommandRegistry {
             CommandDefinition(
                 id = "VOLUME_UP",
                 patterns = listOf(
-                    Regex("""^volume\s*(?:up|increase|raise|high)$"""),
-                    Regex("""^awaaz\s*(?:badhao|tez\s*karo|unche\s*karo)$""")
+                    Regex("""(?:music\s+ka\s+|sound\s+ka\s+|gaane\s+ka\s+)?volume\s*(?:badhao|tez|high|up|increase|raise|loud)(?:\s*(?:karo|karna|kardo|krna|kar\s*do|kr\s*do|de|dena|kariye))?"""),
+                    Regex("""(?:awaaz|aawaz)\s*(?:badhao|tez|unche|loud|up)(?:\s*(?:karo|karna|kardo|krna|kar\s*do|kr\s*do|de|dena|kariye))?"""),
+                    Regex("""(?:raise|increase|turn\s+up|pump\s+up)\s+(?:the\s+)?(?:music\s+)?volume"""),
+                    Regex("""(?:music|sound|gaana)\s*(?:tez|unche|loud)\s*(?:karo|karna|krna|kar\s*do)"""),
+                    Regex("""(?:volume|awaaz)\s+thod[ai]\s+(?:badhao|tez)"""),
+                    Regex("""आवाज़\s*(?:बढ़ाओ|तेज़)"""),
+                    Regex("""वॉल्यूम\s*(?:बढ़ाओ|अप)""")
                 ),
                 slotExtractor = { emptyMap() },
                 handler = { context, _ -> SystemSettingsHandler.adjustVolume(context, 1) },
@@ -216,8 +221,13 @@ object CommandRegistry {
             CommandDefinition(
                 id = "VOLUME_DOWN",
                 patterns = listOf(
-                    Regex("""^volume\s*(?:down|decrease|lower|low)$"""),
-                    Regex("""^awaaz\s*(?:kam\s*karo|dheemi\s*karo)$""")
+                    Regex("""(?:music\s+ka\s+|sound\s+ka\s+|gaane\s+ka\s+)?volume\s*(?:kam|ghatao|dheemi|dheere|down|decrease|lower|low|slow)(?:\s*(?:karo|karna|kardo|krna|kar\s*do|kr\s*do|de|dena|kariye))?"""),
+                    Regex("""(?:awaaz|aawaz)\s*(?:kam|dheemi|dheere|ghatao|slow)(?:\s*(?:karo|karna|kardo|krna|kar\s*do|kr\s*do|de|dena|kariye))?"""),
+                    Regex("""(?:lower|decrease|turn\s+down|reduce)\s+(?:the\s+)?(?:music\s+)?volume"""),
+                    Regex("""(?:music|sound|gaana)\s*(?:dheema|dheere|kam|slow)\s*(?:karo|karna|krna|kar\s*do)"""),
+                    Regex("""(?:volume|awaaz)\s+thod[ai]\s+(?:kam|dheere|dheemi)"""),
+                    Regex("""आवाज़\s*(?:कम|धीमी|घटाओ)"""),
+                    Regex("""वॉल्यूम\s*(?:कम|डाउन)""")
                 ),
                 slotExtractor = { emptyMap() },
                 handler = { context, _ -> SystemSettingsHandler.adjustVolume(context, -1) },
@@ -229,8 +239,9 @@ object CommandRegistry {
             CommandDefinition(
                 id = "VOLUME_MUTE",
                 patterns = listOf(
-                    Regex("""^(?:mute|silence)$"""),
-                    Regex("""^awaaz\s*band\s*karo$""")
+                    Regex("""^(?:mute|silence|silent)$"""),
+                    Regex("""(?:awaaz|sound|volume|music)\s*(?:mute|silent|band)\s*(?:karo|karna|kar\s*do)?"""),
+                    Regex("""आवाज़\s*बंद\s*करो""")
                 ),
                 slotExtractor = { emptyMap() },
                 handler = { context, _ -> SystemSettingsHandler.muteVolume(context) },
@@ -690,6 +701,105 @@ object CommandRegistry {
                 lockScreenSafe = true
             )
         )
+
+        // ==========================================
+        // 19. GREETING & ATTENTION ACKNOWLEDGMENTS
+        // ("Hey", "Hey Jarvis", "Hello Jarvis", "Hello", "Are you there", "Sun rahe ho")
+        // ==========================================
+        COMMANDS.add(
+            CommandDefinition(
+                id = "GREETING_ACK",
+                patterns = listOf(
+                    Regex("""^(?:hey|hello|hi|namaste|pranam)(?:\s+(?:jarvis|bro|bhai|buddy|there))?$"""),
+                    Regex("""^(?:hey|hello|hi|jarvis)$"""),
+                    Regex("""^(?:are\s+you\s+there|you\s+there|you\s+listening)$"""),
+                    Regex("""^(?:sun\s*rahe\s*ho|sun\s*bhai|kya\s*haal\s*hai|kuch\s*kaam\s*hai)$"""),
+                    Regex("""^(?:aur\s*batao|kya\s*chal\s*raha\s*hai|kaise\s*ho)$""")
+                ),
+                slotExtractor = { emptyMap() },
+                handler = { _, _ ->
+                    val replies = listOf(
+                        "At your service, sir. What can I do for you?",
+                        "Yes boss, listening.",
+                        "Online and ready, sir.",
+                        "Haanji sir, boliye kya kaam hai?",
+                        "Yes, I'm here. How can I help you?"
+                    )
+                    CommandResult(
+                        success = true,
+                        spokenReply = replies.random(),
+                        actionId = "GREETING_ACK"
+                    )
+                },
+                lockScreenSafe = true
+            )
+        )
+
+        // ==========================================
+        // 20. LEVEL 6: APP UI AUTOMATION & STOP
+        // ("Stop automation", "Stop scrolling", "Scroll down", "Scroll up", "Auto scroll")
+        // ==========================================
+        COMMANDS.add(
+            CommandDefinition(
+                id = "STOP_AUTOMATION",
+                patterns = listOf(
+                    Regex("""^(?:stop\s+automation|stop\s+scrolling|scroll\s+band\s*karo|stop\s+scroll|stop|rok\s*do|ruko|band\s*karo)$"""),
+                    Regex("""^(?:stop\s+it|ruko\s+bhai|ruk\s*jao|pause\s+scroll)$""")
+                ),
+                slotExtractor = { emptyMap() },
+                handler = { _, _ ->
+                    val stopped = JarvisAccessibilityService.stopAutomation()
+                    if (stopped) {
+                        CommandResult(
+                            success = true,
+                            spokenReply = "Automation stopped, sir.",
+                            actionId = "STOP_AUTOMATION"
+                        )
+                    } else {
+                        CommandResult(
+                            success = true,
+                            spokenReply = "Stopped, sir.",
+                            actionId = "STOP"
+                        )
+                    }
+                },
+                lockScreenSafe = true
+            )
+        )
+
+        COMMANDS.add(
+            CommandDefinition(
+                id = "AUTO_SCROLL",
+                patterns = listOf(
+                    Regex("""^(?:start\s+)?auto\s*scroll(?:\s+(?:reels|shorts|feed|tiktok))?(?:\s+(?:every|har)\s+(\d+)\s*(?:seconds|second|sec|s)?)?$"""),
+                    Regex("""^(?:scroll|swiping)\s+(?:shuru\s*karo|chalu\s*karo)(?:\s+(\d+)\s*(?:second|sec)\s*me)?$""")
+                ),
+                slotExtractor = { input ->
+                    val m = Regex("""(\d+)\s*(?:seconds|second|sec|s)?""").find(input)
+                    val sec = m?.groupValues?.get(1)?.toDoubleOrNull() ?: 10.0
+                    mapOf("interval" to sec.toString())
+                },
+                handler = { _, slots ->
+                    val interval = slots["interval"]?.toDoubleOrNull() ?: 10.0
+                    val started = JarvisAccessibilityService.startAutoScroll("up", intervalSeconds = interval)
+                    if (started) {
+                        CommandResult(
+                            success = true,
+                            spokenReply = "Auto-scrolling every ${interval.toInt()} seconds, sir. Say 'stop' anytime.",
+                            actionId = "AUTO_SCROLL"
+                        )
+                    } else {
+                        CommandResult(
+                            success = false,
+                            spokenReply = "Please enable Jarvis Automation in Accessibility Settings first, sir.",
+                            actionId = "AUTO_SCROLL",
+                            error = "ACCESSIBILITY_DISABLED"
+                        )
+                    }
+                },
+                lockScreenSafe = true
+            )
+        )
     }
 
     /**
@@ -699,7 +809,9 @@ object CommandRegistry {
         return text
             .lowercase()
             .replace(Regex("""^(?:hey\s+|hello\s+)?jarvis[\s,]*"""), "")
-            .replace(Regex("""^(?:please\s+|can\s+you\s+|kripya\s+|zara\s+|bhai\s+)"""), "")
+            .replace(Regex("""^(?:mai|main)\s+(?:kuch\s+)?kaam\s+(?:k(?:a)?r\s+rh[a|e]\s*(?:hoon|hu)?|kar\s+raha\s+hoon)[\s,]*"""), "")
+            .replace(Regex("""^(?:i(?:'m|\s+am)\s+(?:doing\s+some\s+work|working|busy))[\s,]*"""), "")
+            .replace(Regex("""^(?:please\s+|can\s+you\s+|could\s+you\s+|kripya\s+|zara\s+|bhai\s+|yaar\s+|thoda\s+|thodi\s+|suno\s+|are\s+)"""), "")
             .replace(Regex("""[?.!,;]+$"""), "")
             .trim()
     }
@@ -709,10 +821,31 @@ object CommandRegistry {
      * Returns Pair(definition, slots) if matched, null if this is a music/chat command.
      */
     fun match(rawTranscript: String): Pair<CommandDefinition, Map<String, String>>? {
+        val trimmedRaw = rawTranscript.trim().lowercase().replace(Regex("""[?.!,;]+$"""), "")
+
+        // 1. Direct check: If utterance is a greeting ("Hey", "Hey Jarvis", "Hello Jarvis", etc.)
+        val greetingCmd = COMMANDS.firstOrNull { it.id == "GREETING_ACK" }
+        if (greetingCmd != null) {
+            for (pattern in greetingCmd.patterns) {
+                if (pattern.matches(trimmedRaw)) {
+                    return Pair(greetingCmd, emptyMap())
+                }
+            }
+        }
+
+        // 2. Normalize and check functional commands
         val clean = normalize(rawTranscript)
-        if (clean.isBlank()) return null
+        if (clean.isBlank()) {
+            if (trimmedRaw.contains("hey") || trimmedRaw.contains("hello") || trimmedRaw.contains("jarvis")) {
+                if (greetingCmd != null) {
+                    return Pair(greetingCmd, emptyMap())
+                }
+            }
+            return null
+        }
 
         for (cmd in COMMANDS) {
+            if (cmd.id == "GREETING_ACK") continue
             for (pattern in cmd.patterns) {
                 if (pattern.matches(clean) || pattern.containsMatchIn(clean)) {
                     val slots = cmd.slotExtractor(clean) ?: emptyMap()

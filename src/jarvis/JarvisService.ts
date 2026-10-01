@@ -806,19 +806,21 @@ export function getJarvisServiceState(): JarvisState {
   return mod?.getJarvisServiceState ? (mod.getJarvisServiceState() as JarvisState) : 'STOPPED';
 }
 
+export type WakePhraseModel = 'both' | 'hey_jarvis' | 'hello_jarvis';
+
 /**
- * Active Wake Word Model ('hey_jarvis' or 'hello_jarvis')
+ * Active Wake Word Model ('both', 'hey_jarvis', or 'hello_jarvis')
  */
-export async function getSelectedWakeModel(): Promise<'hey_jarvis' | 'hello_jarvis'> {
+export async function getSelectedWakeModel(): Promise<WakePhraseModel> {
   try {
     const val = await AsyncStorage.getItem(JARVIS_WAKE_MODEL_KEY);
-    return (val as 'hey_jarvis' | 'hello_jarvis') || 'hey_jarvis';
+    return (val as WakePhraseModel) || 'both';
   } catch {
-    return 'hey_jarvis';
+    return 'both';
   }
 }
 
-export async function setSelectedWakeModel(model: 'hey_jarvis' | 'hello_jarvis'): Promise<void> {
+export async function setSelectedWakeModel(model: WakePhraseModel): Promise<void> {
   try {
     await AsyncStorage.setItem(JARVIS_WAKE_MODEL_KEY, model);
     const mod = getModule();
@@ -913,6 +915,59 @@ export function getJarvisPauseReason(): string {
 export function forceResetService(): void {
   const mod = getModule();
   mod?.forceResetService?.();
+}
+
+/**
+ * Level 6: General App UI Automation
+ */
+export function openApp(appName: string): boolean {
+  const mod = getModule();
+  return mod?.openApp ? mod.openApp(appName) : false;
+}
+
+export function startAutoScroll(
+  direction: 'up' | 'down' | 'left' | 'right' = 'up',
+  intervalSeconds: number = 10,
+  durationSeconds: number = 0
+): boolean {
+  const mod = getModule();
+  return mod?.startAutoScroll ? mod.startAutoScroll(direction, intervalSeconds, durationSeconds) : false;
+}
+
+export function stopAutomation(): boolean {
+  const mod = getModule();
+  return mod?.stopAutomation ? mod.stopAutomation() : false;
+}
+
+export function isAutomationRunning(): boolean {
+  const mod = getModule();
+  return mod?.isAutomationRunning ? mod.isAutomationRunning() : false;
+}
+
+export function tapElement(query: string): boolean {
+  const mod = getModule();
+  return mod?.tapElement ? mod.tapElement(query) : false;
+}
+
+export function typeText(query: string, text: string): boolean {
+  const mod = getModule();
+  return mod?.typeText ? mod.typeText(query, text) : false;
+}
+
+export function getForegroundApp(): { packageName: string; appName: string; activity?: string } {
+  const mod = getModule();
+  return mod?.getForegroundApp ? mod.getForegroundApp() : { packageName: '', appName: '' };
+}
+
+export function inspectScreen(): Array<{
+  text: string;
+  desc: string;
+  clickable: boolean;
+  editable: boolean;
+  bounds: [number, number, number, number];
+}> {
+  const mod = getModule();
+  return mod?.inspectScreen ? mod.inspectScreen() : [];
 }
 
 

@@ -398,9 +398,9 @@ export function forceResetService(): void {
 }
 
 /**
- * Configure active wake word model ('hey_jarvis' or 'hello_jarvis').
+ * Configure active wake word model ('both', 'hey_jarvis', or 'hello_jarvis').
  */
-export function setSelectedWakeModel(model: 'hey_jarvis' | 'hello_jarvis'): void {
+export function setSelectedWakeModel(model: 'both' | 'hey_jarvis' | 'hello_jarvis'): void {
   try {
     JarvisWakeWordNative.setSelectedWakeModel(model);
   } catch {
@@ -409,13 +409,13 @@ export function setSelectedWakeModel(model: 'hey_jarvis' | 'hello_jarvis'): void
 }
 
 /**
- * Query active wake word model ('hey_jarvis' or 'hello_jarvis').
+ * Query active wake word model ('both', 'hey_jarvis', or 'hello_jarvis').
  */
-export function getSelectedWakeModel(): 'hey_jarvis' | 'hello_jarvis' {
+export function getSelectedWakeModel(): 'both' | 'hey_jarvis' | 'hello_jarvis' {
   try {
-    return (JarvisWakeWordNative.getSelectedWakeModel() || 'hey_jarvis') as 'hey_jarvis' | 'hello_jarvis';
+    return (JarvisWakeWordNative.getSelectedWakeModel() || 'both') as 'both' | 'hey_jarvis' | 'hello_jarvis';
   } catch {
-    return 'hey_jarvis';
+    return 'both';
   }
 }
 
@@ -460,6 +460,83 @@ export function getStatusReport(): { spokenReply: string; actionId: string; extr
     return JarvisWakeWordNative.getStatusReport?.() ?? null;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Level 6: General App UI Automation Primitives
+ */
+export function openApp(appName: string): boolean {
+  try {
+    return !!JarvisWakeWordNative.openApp?.(appName);
+  } catch {
+    return false;
+  }
+}
+
+export function startAutoScroll(
+  direction: 'up' | 'down' | 'left' | 'right' = 'up',
+  intervalSeconds: number = 10,
+  durationSeconds: number = 0
+): boolean {
+  try {
+    return !!JarvisWakeWordNative.startAutoScroll?.(direction, intervalSeconds, durationSeconds);
+  } catch {
+    return false;
+  }
+}
+
+export function stopAutomation(): boolean {
+  try {
+    return !!JarvisWakeWordNative.stopAutomation?.();
+  } catch {
+    return false;
+  }
+}
+
+export function isAutomationRunning(): boolean {
+  try {
+    return !!JarvisWakeWordNative.isAutomationRunning?.();
+  } catch {
+    return false;
+  }
+}
+
+export function tapElement(query: string): boolean {
+  try {
+    return !!JarvisWakeWordNative.tapElement?.(query);
+  } catch {
+    return false;
+  }
+}
+
+export function typeText(query: string, text: string): boolean {
+  try {
+    return !!JarvisWakeWordNative.typeText?.(query, text);
+  } catch {
+    return false;
+  }
+}
+
+export function getForegroundApp(): { packageName: string; appName: string; activity?: string } {
+  try {
+    return JarvisWakeWordNative.getForegroundApp?.() ?? { packageName: '', appName: '' };
+  } catch {
+    return { packageName: '', appName: '' };
+  }
+}
+
+export function inspectScreen(): Array<{
+  text: string;
+  desc: string;
+  clickable: boolean;
+  editable: boolean;
+  bounds: [number, number, number, number];
+}> {
+  try {
+    return JarvisWakeWordNative.inspectScreen?.() ?? [];
+  } catch {
+    return [];
   }
 }
 

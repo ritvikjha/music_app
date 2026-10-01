@@ -69,6 +69,13 @@ export const VALID_INTENTS: Set<IntentName> = new Set([
   // Level 5
   'MORNING_BRIEFING',
   'VISION_QUERY',
+  // Level 6
+  'GREETING',
+  'APP_AUTOMATION',
+  'START_AUTO_SCROLL',
+  'STOP_AUTOMATION',
+  'TAP_ELEMENT',
+  'TYPE_TEXT',
 ]);
 
 export interface MemoryTurn {

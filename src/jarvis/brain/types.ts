@@ -72,7 +72,14 @@ export type IntentName =
   | 'CONTACT_LOOKUP'   // "What's Rahul's number?"
   // Level 5: Ambient & Vision
   | 'MORNING_BRIEFING' // Proactive morning summary
-  | 'VISION_QUERY';    // "What am I looking at?"
+  | 'VISION_QUERY'     // "What am I looking at?"
+  // Level 6: General App UI Automation & Attention
+  | 'GREETING'
+  | 'APP_AUTOMATION'
+  | 'START_AUTO_SCROLL'
+  | 'STOP_AUTOMATION'
+  | 'TAP_ELEMENT'
+  | 'TYPE_TEXT';
 
 
 

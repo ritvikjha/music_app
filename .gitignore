@@ -48,5 +48,6 @@ android/app/build/
 android/.gradle/
 android/app/.cxx/
 android/local.properties
+modules/jarvis-wake-word/android/build/
 
 /server/data/duel-state.json*
