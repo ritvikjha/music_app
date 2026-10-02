@@ -925,12 +925,7 @@ class JarvisListenerService : Service() {
                 "use_fallback_lang" to useFallbackLang
             ))
 
-            val recognizer = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && SpeechRecognizer.isOnDeviceRecognitionAvailable(this)) {
-                Log.i(TAG, "Creating fast zero-latency on-device SpeechRecognizer")
-                SpeechRecognizer.createOnDeviceSpeechRecognizer(this)
-            } else {
-                SpeechRecognizer.createSpeechRecognizer(this)
-            }
+            val recognizer = SpeechRecognizer.createSpeechRecognizer(this)
             speechRecognizer = recognizer
             hasStartedSpeaking.set(false)
             latestTranscript = ""
@@ -1046,14 +1041,23 @@ class JarvisListenerService : Service() {
                         "speech_started" to speechStarted
                     ))
 
-                    // Step 2d: If language unavailable/not supported, fallback to system default locale retry ONCE
-                    val isLanguageError = (error == SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE || error == SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED)
-                    if (isLanguageError && !hasRetriedCapture && isCapturingCommand.get()) {
+                    // Step 2d: If language unavailable/not supported or server disconnected, fallback to system default locale retry ONCE
+                    val isRecoverableServiceError = (error == SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE || 
+                                                     error == SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED ||
+                                                     error == SpeechRecognizer.ERROR_SERVER_DISCONNECTED)
+                    if (isRecoverableServiceError && !hasRetriedCapture && isCapturingCommand.get()) {
                         hasRetriedCapture = true
-                        Log.w(TAG, "SpeechRecognizer language error ($errorName) — retrying with system default language fallback")
+                        Log.w(TAG, "SpeechRecognizer recoverable error ($errorName) — retrying with system default language fallback")
                         logTimeline("LANGUAGE_FALLBACK_RETRY", mapOf("previous_error" to errorName))
-                        mainHandler.post {
-                            startSpeechRecognition(silenceTimeoutMs = 8000L, useFallbackLang = true)
+                        try {
+                            speechRecognizer?.destroy()
+                        } catch (e: Exception) {}
+                        speechRecognizer = null
+                        serviceScope.launch(Dispatchers.Main) {
+                            delay(150L) // Crucial: allow OS binder service time to fully unbind
+                            if (isCapturingCommand.get()) {
+                                startSpeechRecognition(silenceTimeoutMs = 8000L, useFallbackLang = true)
+                            }
                         }
                         return
                     }
