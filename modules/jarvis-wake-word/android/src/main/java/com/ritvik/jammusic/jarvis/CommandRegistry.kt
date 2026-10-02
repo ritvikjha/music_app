@@ -287,41 +287,122 @@ object CommandRegistry {
         )
 
         // ==========================================
-        // 9. WHATSAPP MESSAGE (Hands-Free Auto-Send)
+        // 9. WHATSAPP MESSAGE (Hands-Free Auto-Send & Draft-Not-Send)
         // ==========================================
         COMMANDS.add(
             CommandDefinition(
                 id = "WHATSAPP_MESSAGE",
                 patterns = listOf(
-                    Regex("""^(?:send\s+a\s+)?whatsapp(?:\s+message)?\s+(?:to\s+)?([a-zA-Z0-9\s+]+?)\s+(?:saying|that|message)?\s*(.+)$"""),
-                    Regex("""^(?:send\s+a\s+)?message\s+(?:to\s+)?([a-zA-Z0-9\s+]+?)\s+(?:on\s+whatsapp\s+)?(?:saying|that|message)?\s*(.+)$"""),
+                    Regex("""^(?:draft\s+(?:a\s+)?(?:whatsapp|message)|send\s+a\s+whatsapp|whatsapp|send\s+a\s+message|message)\s+(?:message\s+)?(?:to\s+)?([a-zA-Z0-9\s+]+?)\s+(?:on\s+whatsapp\s+)?(?:saying|that|message)?\s*(.+)$"""),
+                    Regex("""^(?:draft\s+to|draft)\s+([a-zA-Z0-9\s+]+?)\s+(?:saying\s+)?(.+)$"""),
                     Regex("""^whatsapp\s+([a-zA-Z0-9\s+]+?)\s+(.+)$"""),
                     Regex("""^message\s+([a-zA-Z0-9\s+]+?)\s+(.+)$"""),
-                    Regex("""^([a-zA-Z0-9\s+]+?)\s+(?:ko\s+)?whatsapp\s*(?:karo|bhejo|par\s*message\s*karo)\s*(.+)$"""),
-                    Regex("""^([a-zA-Z0-9\s+]+?)\s+(?:ko\s+)?message\s*(?:karo|bhejo)\s*(.+)$""")
+                    Regex("""^([a-zA-Z0-9\s+]+?)\s+(?:ko\s+)?whatsapp\s*(?:karo|bhejo|par\s*message\s*karo|draft\s*karo)\s*(.+)$"""),
+                    Regex("""^([a-zA-Z0-9\s+]+?)\s+(?:ko\s+)?message\s*(?:karo|bhejo|draft\s*karo)\s*(.+)$""")
                 ),
                 slotExtractor = { input ->
+                    val isDraft = input.contains("draft") || input.contains("taiyar")
+                    val pDraft = Regex("""^(?:draft\s+(?:a\s+)?(?:whatsapp|message)?(?:\s+to)?|draft\s+to)\s+([a-zA-Z0-9\s+]+?)\s+(?:saying\s+|that\s+)?(.+)$""").find(input)
+                    if (pDraft != null) {
+                        return@CommandDefinition mapOf(
+                            "contact" to pDraft.groupValues[1].trim(),
+                            "message" to pDraft.groupValues[2].trim(),
+                            "draft" to "true"
+                        )
+                    }
                     val p1 = Regex("""^(?:send\s+a\s+)?(?:whatsapp|message)(?:\s+message)?\s+(?:to\s+)?([a-zA-Z0-9\s+]+?)\s+(?:on\s+whatsapp\s+)?(?:saying|that|message)?\s*(.+)$""").find(input)
                     if (p1 != null) {
-                        return@CommandDefinition mapOf("contact" to p1.groupValues[1].trim(), "message" to p1.groupValues[2].trim())
+                        return@CommandDefinition mapOf(
+                            "contact" to p1.groupValues[1].trim(),
+                            "message" to p1.groupValues[2].trim(),
+                            "draft" to if (isDraft) "true" else "false"
+                        )
                     }
                     val p2 = Regex("""^(?:whatsapp|message)\s+([a-zA-Z0-9\s+]+?)\s+(.+)$""").find(input)
                     if (p2 != null) {
-                        return@CommandDefinition mapOf("contact" to p2.groupValues[1].trim(), "message" to p2.groupValues[2].trim())
+                        return@CommandDefinition mapOf(
+                            "contact" to p2.groupValues[1].trim(),
+                            "message" to p2.groupValues[2].trim(),
+                            "draft" to if (isDraft) "true" else "false"
+                        )
                     }
-                    val p3 = Regex("""^([a-zA-Z0-9\s+]+?)\s+(?:ko\s+)?(?:whatsapp|message)\s*(?:karo|bhejo|par\s*message\s*karo)\s*(.+)$""").find(input)
+                    val p3 = Regex("""^([a-zA-Z0-9\s+]+?)\s+(?:ko\s+)?(?:whatsapp|message)\s*(?:karo|bhejo|par\s*message\s*karo|draft\s*karo)\s*(.+)$""").find(input)
                     if (p3 != null) {
-                        return@CommandDefinition mapOf("contact" to p3.groupValues[1].trim(), "message" to p3.groupValues[2].trim())
+                        return@CommandDefinition mapOf(
+                            "contact" to p3.groupValues[1].trim(),
+                            "message" to p3.groupValues[2].trim(),
+                            "draft" to if (isDraft) "true" else "false"
+                        )
                     }
                     null
                 },
                 handler = { context, slots ->
                     val contact = slots["contact"] ?: ""
                     val message = slots["message"] ?: ""
-                    WhatsAppHandler.sendWhatsAppMessage(context, contact, message)
+                    val draftOnly = slots["draft"] == "true"
+                    WhatsAppHandler.sendWhatsAppMessage(context, contact, message, draftOnly = draftOnly)
                 },
                 lockScreenSafe = false,
                 requiredPermissions = listOf(android.Manifest.permission.READ_CONTACTS)
+            )
+        )
+
+        // ==========================================
+        // 9b. EMERGENCY & SOS PROTOCOL
+        // ==========================================
+        COMMANDS.add(
+            CommandDefinition(
+                id = "EMERGENCY_SOS",
+                patterns = listOf(
+                    Regex("""^(?:emergency|sos|help\s*me|emergency\s*protocol|save\s*me|bachao|madad\s*karo)$"""),
+                    Regex("""^(?:send\s+help|i\s+need\s+help\s+now)$""")
+                ),
+                slotExtractor = { emptyMap() },
+                handler = { context, _ ->
+                    val prefs = context.getSharedPreferences("JarvisPrefs", Context.MODE_PRIVATE)
+                    val emergencyContact = prefs.getString("emergency_contact", "112") ?: "112"
+                    CallHandler.callContact(context, emergencyContact)
+                    CommandResult(
+                        success = true,
+                        spokenReply = "Emergency protocol activated. Contacting emergency services and broadcasting distress beacon, sir.",
+                        actionId = "EMERGENCY_SOS"
+                    )
+                },
+                lockScreenSafe = true
+            )
+        )
+
+        // ==========================================
+        // 9c. CALENDAR & SCHEDULE BRIEFING
+        // ==========================================
+        COMMANDS.add(
+            CommandDefinition(
+                id = "CALENDAR_BRIEFING",
+                patterns = listOf(
+                    Regex("""^(?:what(?:'s|\s+is)\s+on\s+my\s+calendar|my\s+meetings(?:\s+today)?|any\s+meetings\s+today|schedule\s+for\s+today|today(?:'s)?\s+schedule|aaj\s+ki\s+meetings|aaj\s+ka\s+schedule)$"""),
+                    Regex("""^(?:do\s+i\s+have\s+(?:any\s+)?meetings|what\s+are\s+my\s+meetings)$""")
+                ),
+                slotExtractor = { emptyMap() },
+                handler = { context, _ -> CalendarHandler.getCalendarBriefing(context) },
+                lockScreenSafe = true,
+                requiredPermissions = listOf(android.Manifest.permission.READ_CALENDAR)
+            )
+        )
+
+        // ==========================================
+        // 9d. SMART DO NOT DISTURB
+        // ==========================================
+        COMMANDS.add(
+            CommandDefinition(
+                id = "SMART_DND",
+                patterns = listOf(
+                    Regex("""^(?:smart\s+dnd|auto\s+dnd|meeting\s+mode|meeting\s+mode\s+on|dnd\s+mode)$"""),
+                    Regex("""^(?:meeting\s+chalu\s+hai|dnd\s+karo)$""")
+                ),
+                slotExtractor = { emptyMap() },
+                handler = { context, _ -> CalendarHandler.checkAndApplySmartDnd(context) },
+                lockScreenSafe = true,
+                requiredPermissions = listOf(android.Manifest.permission.READ_CALENDAR)
             )
         )
 

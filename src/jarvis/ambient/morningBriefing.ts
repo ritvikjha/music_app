@@ -8,6 +8,7 @@
 import { getCurrentTime, getCurrentDate } from '../tools/timeDateTool';
 import { fetchWeather } from '../tools/weatherTool';
 import { getAllNotes } from '../memory/notepad';
+import { getCalendarBriefing } from '../../../modules/jarvis-wake-word';
 
 export async function generateMorningBriefing(batteryPercent?: number): Promise<string> {
   const parts: string[] = [];
@@ -19,6 +20,13 @@ export async function generateMorningBriefing(batteryPercent?: number): Promise<
 
   const weather = await fetchWeather();
   parts.push(weather);
+
+  try {
+    const cal = getCalendarBriefing();
+    if (cal && cal.success && cal.spokenReply) {
+      parts.push(cal.spokenReply);
+    }
+  } catch {}
 
   if (batteryPercent !== undefined) {
     parts.push(`Device battery is at ${batteryPercent}%.`);

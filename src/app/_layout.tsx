@@ -15,6 +15,7 @@ import { colors } from '../theme';
 import { OfflineStatusPill } from '../components/OfflineStatusPill';
 import { GameInviteListener } from '../components/GameInviteListener';
 import { JarvisBridge } from '../jarvis/JarvisBridge';
+import { JarvisMiniOrb } from '../jarvis/ui/JarvisMiniOrb';
 
 /**
  * Root layout — wraps the entire app in providers and configures
@@ -36,6 +37,7 @@ export default function RootLayout() {
                   <JamProvider>
                     <ToastProvider>
                     <JarvisBridge />
+                    <JarvisMiniOrb />
                     <StatusBar style="light" />
                     <OfflineStatusPill />
                     <GameInviteListener />

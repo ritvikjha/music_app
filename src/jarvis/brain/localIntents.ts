@@ -684,7 +684,37 @@ const matchQuestionsOrChat: PatternMatcher = (text) => {
   return null;
 };
 
-const matchWhatsAppMessage: PatternMatcher = (text) => {
+const matchWhatsAppMessage: PatternMatcher = (text, context) => {
+  const isDraft = /\b(?:draft|taiyar)\b/i.test(text);
+
+  // Contextual reply: "reply saying I'm on my way" / "reply that I will be late"
+  const mReply = text.match(/^(?:reply|jawab\s+do)(?:\s+(?:saying|that|ko))?\s+(.+)$/i);
+  if (mReply) {
+    const message = mReply[1].trim();
+    const contact = (context as any)?.activeWhatsAppContact || 'Rahul';
+    return {
+      intent: 'WHATSAPP_MESSAGE',
+      slots: { contact, message, draft: true },
+      confidence: 0.95,
+      spokenReply: `Drafted reply to ${contact}, sir. Review and tap send.`,
+      source: 'local',
+    };
+  }
+
+  // Explicit draft: "draft a message to Rahul saying I am on my way"
+  const mDraft = text.match(/^(?:draft\s+(?:a\s+)?(?:whatsapp|message)?(?:\s+to)?|draft\s+to)\s+([a-zA-Z0-9\s+]+?)\s+(?:saying|that)?\s*(.+)$/i);
+  if (mDraft) {
+    const contact = mDraft[1].trim();
+    const message = mDraft[2].trim();
+    return {
+      intent: 'WHATSAPP_MESSAGE',
+      slots: { contact, message, draft: true },
+      confidence: 0.98,
+      spokenReply: `Drafted message to ${contact}, sir. Review and tap send.`,
+      source: 'local',
+    };
+  }
+
   // English:
   // "send a whatsapp message to rahul saying I am coming home"
   // "whatsapp papa I am coming home"
@@ -699,9 +729,9 @@ const matchWhatsAppMessage: PatternMatcher = (text) => {
     const message = m1[2].trim();
     return {
       intent: 'WHATSAPP_MESSAGE',
-      slots: { contact, message },
+      slots: { contact, message, draft: isDraft },
       confidence: 0.98,
-      spokenReply: `Sending WhatsApp message to ${contact}...`,
+      spokenReply: isDraft ? `Drafted message to ${contact}, sir. Review and tap send.` : `Sending WhatsApp message to ${contact}...`,
       source: 'local',
     };
   }
@@ -709,15 +739,15 @@ const matchWhatsAppMessage: PatternMatcher = (text) => {
   // Hinglish:
   // "papa ko whatsapp karo main aa raha hu"
   // "rahul ko message bhejo kahan ho"
-  const m2 = text.match(/^([a-zA-Z0-9\s+]+?)\s+(?:ko\s+)?(?:whatsapp|message)\s*(?:karo|bhejo|par\s*message\s*karo)\s*(.+)$/i);
+  const m2 = text.match(/^([a-zA-Z0-9\s+]+?)\s+(?:ko\s+)?(?:whatsapp|message)\s*(?:karo|bhejo|par\s*message\s*karo|draft\s*karo)\s*(.+)$/i);
   if (m2) {
     const contact = m2[1].trim();
     const message = m2[2].trim();
     return {
       intent: 'WHATSAPP_MESSAGE',
-      slots: { contact, message },
+      slots: { contact, message, draft: isDraft },
       confidence: 0.98,
-      spokenReply: `${contact} ko WhatsApp bhej raha hu...`,
+      spokenReply: isDraft ? `${contact} ke liye message draft kar diya hai, sir.` : `${contact} ko WhatsApp bhej raha hu...`,
       source: 'local',
     };
   }
@@ -1236,6 +1266,75 @@ const matchIdentityAndMemory: PatternMatcher = (text) => {
 };
 
 // ==========================================
+// Extensibility: User-Defined Routines & Phrase Aliases
+// ==========================================
+const matchRoutinesAndAliases: PatternMatcher = (text) => {
+  const clean = text.trim();
+
+  // 1. Create Routine: "Remember this as 'leaving home': wifi off, bluetooth on, play my usual"
+  const mRoutine = clean.match(/^(?:remember\s+(?:this\s+)?as|create\s+routine|new\s+routine)\s+['"]?(.+?)['"]?:\s+(.+)$/i);
+  if (mRoutine) {
+    const routineName = mRoutine[1].trim().toLowerCase();
+    const actionsRaw = mRoutine[2].trim();
+    const actions = actionsRaw
+      .split(/(?:,\s*|\s+(?:and|then|aur|phir)\s+)/i)
+      .map((a) => a.trim())
+      .filter((a) => a.length > 0);
+
+    if (routineName && actions.length > 0) {
+      return {
+        intent: 'CREATE_ROUTINE',
+        slots: { routineName, actions },
+        confidence: 0.99,
+        spokenReply: `Created routine "${routineName}" with ${actions.length} actions, sir.`,
+        source: 'local',
+      };
+    }
+  }
+
+  // 2. Create Phrase Alias: "When I say 'go dark' trigger night protocol" / "Alias 'sleep time' to 'night protocol'"
+  const mAlias =
+    clean.match(/^(?:when\s+i\s+say|whenever\s+i\s+say)\s+['"]?(.+?)['"]?\s+(?:(?:then\s+)?(?:do|trigger|execute|run|karo)|means)\s+['"]?(.+?)['"]?$/i) ||
+    clean.match(/^alias\s+['"]?(.+?)['"]?\s+(?:to|means|as)\s+['"]?(.+?)['"]?$/i);
+
+  if (mAlias) {
+    const phrase = mAlias[1].trim().toLowerCase();
+    const targetPhrase = mAlias[2].trim();
+    if (phrase && targetPhrase) {
+      return {
+        intent: 'CREATE_ALIAS',
+        slots: { phrase, targetPhrase },
+        confidence: 0.99,
+        spokenReply: `Understood, sir. When you say "${phrase}", I will execute "${targetPhrase}".`,
+        source: 'local',
+      };
+    }
+  }
+
+  return null;
+};
+
+// ==========================================
+// Safety & Trust: SOS / Emergency Command
+// ==========================================
+const matchEmergency: PatternMatcher = (text) => {
+  const clean = text.trim().toLowerCase().replace(/[?.!,;]+$/, '');
+  if (
+    /^(?:jarvis\s+)?(?:emergency|sos|help\s+me|madad\s+karo|emergency\s+protocol|bachao|bachao\s+mujhe)$/i.test(clean) ||
+    /^(?:send\s+help|i\s+need\s+help\s+now)$/i.test(clean)
+  ) {
+    return {
+      intent: 'EMERGENCY',
+      slots: {},
+      confidence: 1.0,
+      spokenReply: 'Emergency protocol activated. Transmitting distress beacon and location, sir.',
+      source: 'local',
+    };
+  }
+  return null;
+};
+
+// ==========================================
 // Level 6: General App UI Automation Matcher
 // ==========================================
 
@@ -1329,7 +1428,9 @@ const matchAutomation: PatternMatcher = (text) => {
 
 // Ordered list of matcher functions (first match wins)
 const MATCHERS: PatternMatcher[] = [
+  matchEmergency,
   matchGreetings,
+  matchRoutinesAndAliases,
   matchAutomation,
   matchStarkEasterEggs,
   matchStarkProtocols,

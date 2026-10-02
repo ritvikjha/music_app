@@ -517,6 +517,25 @@ class JarvisWakeWordModule : Module() {
         Function("inspectScreen") {
             JarvisAccessibilityService.inspectScreen()
         }
+
+        Function("getCalendarBriefing") {
+            val context = appContext.reactContext ?: return@Function null
+            val result = com.ritvik.jammusic.jarvis.handlers.CalendarHandler.getCalendarBriefing(context)
+            mapOf(
+                "success" to result.success,
+                "spokenReply" to result.spokenReply,
+                "eventCount" to (result.extraData?.get("eventCount") ?: "0")
+            )
+        }
+
+        Function("checkAndApplySmartDnd") {
+            val context = appContext.reactContext ?: return@Function null
+            val result = com.ritvik.jammusic.jarvis.handlers.CalendarHandler.checkAndApplySmartDnd(context)
+            mapOf(
+                "success" to result.success,
+                "spokenReply" to result.spokenReply
+            )
+        }
     }
 }
 

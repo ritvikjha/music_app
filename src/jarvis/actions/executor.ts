@@ -26,6 +26,10 @@ import { searchWebKnowledge } from '../tools/webSearchTool';
 import { proactiveEngine } from '../ambient/proactiveEngine';
 import { Linking } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { saveRoutine, getRoutine, saveAlias } from '../memory/routines';
+import { parseLocalIntent } from '../brain/localIntents';
+import { verifySpeakerForIntent } from '../safety/voiceId';
+import { recordCommandExecution } from '../eventLogger';
 
 // Optional native volume control helper
 let JarvisNativeModule: any = null;
@@ -49,6 +53,22 @@ export interface ActionResult {
  */
 export async function executeIntent(intentResult: IntentResult): Promise<ActionResult> {
   try {
+    // Speaker verification check for sensitive actions (payments, messaging, calling, emergency)
+    const speakerCheck = await verifySpeakerForIntent(intentResult.intent, intentResult.confidence);
+    if (!speakerCheck.allowed) {
+      return {
+        ok: false,
+        spokenReply: speakerCheck.spokenReply || 'Voice verification required for sensitive operations, sir.',
+        toast: {
+          message: 'Voice Verification Failed',
+          type: 'error',
+        },
+      };
+    }
+
+    // Record command telemetry for usage statistics
+    recordCommandExecution(intentResult.intent);
+
     const handlers = getLiveHandlers();
     const live = isLiveMounted() && handlers !== null;
 
@@ -948,6 +968,28 @@ async function executeLiveIntent(
       };
     }
 
+    case 'WHATSAPP_MESSAGE': {
+      const contact = slots?.contact || '';
+      const message = slots?.message || '';
+      const isDraft = Boolean(slots?.draft);
+      try {
+        if (JarvisNativeModule?.sendWhatsAppMessage) {
+          JarvisNativeModule.sendWhatsAppMessage(contact, message);
+        } else {
+          Linking.openURL(`whatsapp://send?text=${encodeURIComponent(message)}`);
+        }
+      } catch (err) {
+        Linking.openURL(`whatsapp://send?text=${encodeURIComponent(message)}`);
+      }
+      return {
+        ok: true,
+        spokenReply: isDraft
+          ? `Drafted message to ${contact}, sir. Review and tap send.`
+          : `Sending WhatsApp message to ${contact}...`,
+        toast: { message: isDraft ? `Draft: ${contact}` : `WhatsApp: ${contact}`, type: 'info' },
+      };
+    }
+
     case 'CALL': {
       const contact = slots?.contact || slots?.query || '';
       try {
@@ -990,6 +1032,81 @@ async function executeLiveIntent(
       return {
         ok: true,
         spokenReply: formatChatReply(intentResult.spokenReply || "I'm listening."),
+      };
+    }
+
+    case 'CREATE_ROUTINE': {
+      const name = (slots?.routineName || '').trim();
+      const actions = slots?.actions || [];
+      if (!name || !Array.isArray(actions) || actions.length === 0) {
+        return { ok: false, spokenReply: 'Please provide a routine name and actions, sir.' };
+      }
+      await saveRoutine(name, actions);
+      return {
+        ok: true,
+        spokenReply: `Routine "${name}" configured with ${actions.length} commands, sir.`,
+        toast: { message: `Routine Saved: ${name}`, type: 'success' },
+      };
+    }
+
+    case 'CREATE_ALIAS': {
+      const phrase = (slots?.phrase || '').trim();
+      const targetPhrase = (slots?.targetPhrase || '').trim();
+      if (!phrase || !targetPhrase) {
+        return { ok: false, spokenReply: 'Please specify the alias phrase and target command, sir.' };
+      }
+      await saveAlias(phrase, targetPhrase);
+      return {
+        ok: true,
+        spokenReply: `Understood, sir. When you say "${phrase}", I will execute "${targetPhrase}".`,
+        toast: { message: `Alias: "${phrase}" → "${targetPhrase}"`, type: 'success' },
+      };
+    }
+
+    case 'EXECUTE_ROUTINE': {
+      const routineName = (slots?.routineName || '').trim();
+      let actions: string[] = slots?.actions;
+      if (!actions || !Array.isArray(actions) || actions.length === 0) {
+        actions = (await getRoutine(routineName)) || [];
+      }
+      if (!actions || actions.length === 0) {
+        return { ok: false, spokenReply: `Routine "${routineName}" not found, sir.` };
+      }
+
+      for (const actionText of actions) {
+        try {
+          const subIntent = parseLocalIntent(actionText);
+          if (subIntent && subIntent.intent !== 'UNKNOWN') {
+            await executeIntent(subIntent);
+            await new Promise((r) => setTimeout(r, 400));
+          }
+        } catch (err) {
+          console.warn(`[Jarvis Routine] Error executing step '${actionText}':`, err);
+        }
+      }
+
+      return {
+        ok: true,
+        spokenReply: `Completed ${routineName} routine, sir.`,
+        toast: { message: `Routine Executed: ${routineName}`, type: 'success' },
+      };
+    }
+
+    case 'EMERGENCY': {
+      try {
+        const emergencyContact = (await AsyncStorage.getItem('@jarvis_emergency_contact')) || '112';
+        if (JarvisNativeModule?.callContact) {
+          JarvisNativeModule.callContact(emergencyContact);
+        } else {
+          Linking.openURL(`tel:${encodeURIComponent(emergencyContact)}`);
+        }
+      } catch (err) {
+        Linking.openURL('tel:112');
+      }
+      return {
+        ok: true,
+        spokenReply: 'Emergency protocol initiated. Dialing emergency services and broadcasting distress beacon, sir.',
+        toast: { message: 'EMERGENCY PROTOCOL ACTIVATED', type: 'error' },
       };
     }
 
@@ -1357,6 +1474,27 @@ async function executeFallbackIntent(intentResult: IntentResult): Promise<Action
       return { ok: true, spokenReply: briefing };
     }
 
+    case 'WHATSAPP_MESSAGE': {
+      const contact = slots?.contact || '';
+      const message = slots?.message || '';
+      const isDraft = Boolean(slots?.draft);
+      try {
+        if (JarvisNativeModule?.sendWhatsAppMessage) {
+          JarvisNativeModule.sendWhatsAppMessage(contact, message);
+        } else {
+          Linking.openURL(`whatsapp://send?text=${encodeURIComponent(message)}`);
+        }
+      } catch (err) {
+        Linking.openURL(`whatsapp://send?text=${encodeURIComponent(message)}`);
+      }
+      return {
+        ok: true,
+        spokenReply: isDraft
+          ? `Drafted message to ${contact}, sir. Review and tap send.`
+          : `Sending WhatsApp message to ${contact}...`,
+      };
+    }
+
     case 'CALL': {
       const contact = slots?.contact || slots?.query || '';
       try {
@@ -1397,6 +1535,66 @@ async function executeFallbackIntent(intentResult: IntentResult): Promise<Action
       return {
         ok: true,
         spokenReply: intentResult.spokenReply || "I'm listening.",
+      };
+    }
+
+    case 'CREATE_ROUTINE': {
+      const name = (slots?.routineName || '').trim();
+      const actions = slots?.actions || [];
+      if (!name || !Array.isArray(actions) || actions.length === 0) {
+        return { ok: false, spokenReply: 'Please provide a routine name and actions, sir.' };
+      }
+      await saveRoutine(name, actions);
+      return { ok: true, spokenReply: `Routine "${name}" configured with ${actions.length} commands, sir.` };
+    }
+
+    case 'CREATE_ALIAS': {
+      const phrase = (slots?.phrase || '').trim();
+      const targetPhrase = (slots?.targetPhrase || '').trim();
+      if (!phrase || !targetPhrase) {
+        return { ok: false, spokenReply: 'Please specify the alias phrase and target command, sir.' };
+      }
+      await saveAlias(phrase, targetPhrase);
+      return { ok: true, spokenReply: `Understood, sir. When you say "${phrase}", I will execute "${targetPhrase}".` };
+    }
+
+    case 'EXECUTE_ROUTINE': {
+      const routineName = (slots?.routineName || '').trim();
+      let actions: string[] = slots?.actions;
+      if (!actions || !Array.isArray(actions) || actions.length === 0) {
+        actions = (await getRoutine(routineName)) || [];
+      }
+      if (!actions || actions.length === 0) {
+        return { ok: false, spokenReply: `Routine "${routineName}" not found, sir.` };
+      }
+      for (const actionText of actions) {
+        try {
+          const subIntent = parseLocalIntent(actionText);
+          if (subIntent && subIntent.intent !== 'UNKNOWN') {
+            await executeFallbackIntent(subIntent);
+            await new Promise((r) => setTimeout(r, 400));
+          }
+        } catch (err) {
+          console.warn(`[Jarvis Fallback] Error in routine action '${actionText}':`, err);
+        }
+      }
+      return { ok: true, spokenReply: `Completed ${routineName} routine, sir.` };
+    }
+
+    case 'EMERGENCY': {
+      try {
+        const emergencyContact = (await AsyncStorage.getItem('@jarvis_emergency_contact')) || '112';
+        if (JarvisNativeModule?.callContact) {
+          JarvisNativeModule.callContact(emergencyContact);
+        } else {
+          Linking.openURL(`tel:${encodeURIComponent(emergencyContact)}`);
+        }
+      } catch (err) {
+        Linking.openURL('tel:112');
+      }
+      return {
+        ok: true,
+        spokenReply: 'Emergency protocol initiated. Dialing emergency services and broadcasting distress beacon, sir.',
       };
     }
 

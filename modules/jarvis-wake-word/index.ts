@@ -540,6 +540,22 @@ export function inspectScreen(): Array<{
   }
 }
 
+export function getCalendarBriefing(): { success: boolean; spokenReply: string; eventCount: string } | null {
+  try {
+    return JarvisWakeWordNative.getCalendarBriefing?.() ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export function checkAndApplySmartDnd(): { success: boolean; spokenReply: string } | null {
+  try {
+    return JarvisWakeWordNative.checkAndApplySmartDnd?.() ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export type {
   WakeWordDetection,
   JarvisState,

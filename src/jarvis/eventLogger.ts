@@ -41,6 +41,9 @@ const ringBuffer: JarvisLogEvent[] = [];
 const LAST_HEARD_KEY = '@jam_jarvis_last_heard_ts';
 const WAKE_COUNT_KEY = '@jam_jarvis_wake_count_today';
 const WAKE_DATE_KEY = '@jam_jarvis_wake_count_date';
+const WEEKLY_WAKES_KEY = '@jam_jarvis_weekly_wakes';
+const COMMAND_USAGE_KEY = '@jam_jarvis_cmd_usage';
+const HOURLY_STATS_KEY = '@jam_jarvis_hourly_stats';
 
 let cachedLastHeard: number | null = null;
 let cachedWakeCount: number = 0;
@@ -95,6 +98,14 @@ export async function recordWakeHit(score: number): Promise<void> {
       cachedWakeCount++;
       await AsyncStorage.setItem(WAKE_COUNT_KEY, cachedWakeCount.toString());
     }
+
+    // Update weekly aggregation
+    try {
+      const rawW = (await AsyncStorage.getItem(WEEKLY_WAKES_KEY)) || '{}';
+      const weeklyMap: Record<string, number> = JSON.parse(rawW);
+      weeklyMap[todayStr] = cachedWakeCount;
+      await AsyncStorage.setItem(WEEKLY_WAKES_KEY, JSON.stringify(weeklyMap));
+    } catch {}
   } catch (err) {
     console.warn('[Jarvis Logger] Failed to persist wake statistics:', err);
   }
@@ -206,3 +217,80 @@ export async function getTodayWakeCount(): Promise<number> {
     return 0;
   }
 }
+
+export interface WeeklyStats {
+  totalWakesThisWeek: number;
+  topCommands: Array<{ intent: string; count: number }>;
+  busiestHour: string;
+  dailyWakes: Record<string, number>;
+}
+
+/**
+ * Record intent execution frequency and hourly distribution.
+ */
+export async function recordCommandExecution(intent: string): Promise<void> {
+  try {
+    const raw = (await AsyncStorage.getItem(COMMAND_USAGE_KEY)) || '{}';
+    const counts: Record<string, number> = JSON.parse(raw);
+    counts[intent] = (counts[intent] || 0) + 1;
+    await AsyncStorage.setItem(COMMAND_USAGE_KEY, JSON.stringify(counts));
+
+    const hour = new Date().getHours();
+    const rawHourly = (await AsyncStorage.getItem(HOURLY_STATS_KEY)) || '{}';
+    const hourly: Record<string, number> = JSON.parse(rawHourly);
+    hourly[hour] = (hourly[hour] || 0) + 1;
+    await AsyncStorage.setItem(HOURLY_STATS_KEY, JSON.stringify(hourly));
+  } catch {}
+}
+
+/**
+ * Compute weekly telemetry and aggregate usage statistics.
+ */
+export async function getWeeklyUsageStats(): Promise<WeeklyStats> {
+  try {
+    const rawCmds = (await AsyncStorage.getItem(COMMAND_USAGE_KEY)) || '{}';
+    const counts: Record<string, number> = JSON.parse(rawCmds);
+    const topCommands = Object.entries(counts)
+      .map(([intent, count]) => ({ intent, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+
+    const rawHourly = (await AsyncStorage.getItem(HOURLY_STATS_KEY)) || '{}';
+    const hourly: Record<string, number> = JSON.parse(rawHourly);
+    let peakHour = 12;
+    let maxHourlyCount = 0;
+    for (const [h, cnt] of Object.entries(hourly)) {
+      if (cnt > maxHourlyCount) {
+        maxHourlyCount = cnt;
+        peakHour = parseInt(h, 10);
+      }
+    }
+    const formattedPeak = `${peakHour % 12 === 0 ? 12 : peakHour % 12} ${peakHour >= 12 ? 'PM' : 'AM'}`;
+
+    const rawWeekly = (await AsyncStorage.getItem(WEEKLY_WAKES_KEY)) || '{}';
+    const dailyWakes: Record<string, number> = JSON.parse(rawWeekly);
+    const todayWake = await getTodayWakeCount();
+    const todayStr = new Date().toISOString().slice(0, 10);
+    dailyWakes[todayStr] = todayWake;
+
+    let totalWakes = 0;
+    for (const cnt of Object.values(dailyWakes)) {
+      totalWakes += cnt;
+    }
+
+    return {
+      totalWakesThisWeek: Math.max(totalWakes, todayWake),
+      topCommands,
+      busiestHour: maxHourlyCount > 0 ? formattedPeak : '11 AM',
+      dailyWakes,
+    };
+  } catch {
+    return {
+      totalWakesThisWeek: 0,
+      topCommands: [],
+      busiestHour: 'N/A',
+      dailyWakes: {},
+    };
+  }
+}
+

@@ -37,6 +37,7 @@ import {
   type JarvisState,
 } from '../../../modules/jarvis-wake-word';
 import { getLastHeardFormatted, getTodayWakeCount } from '../eventLogger';
+import { JarvisStatsModal } from './JarvisStatsModal';
 
 interface JarvisStatusRowProps {
   enabled: boolean;
@@ -59,6 +60,7 @@ export const JarvisStatusRow: React.FC<JarvisStatusRowProps> = ({
   const [pauseReason, setPauseReason] = useState<string>('');
   const [lastHeardText, setLastHeardText] = useState('Not yet today');
   const [wakeCount, setWakeCount] = useState(0);
+  const [showStatsModal, setShowStatsModal] = useState(false);
 
   // Refresh status and telemetry
   const refreshStatus = async () => {
@@ -248,9 +250,13 @@ export const JarvisStatusRow: React.FC<JarvisStatusRowProps> = ({
         </TouchableOpacity>
       </View>
 
-      {/* Telemetry Row */}
+      {/* Telemetry Row — Tap to view weekly stats & intelligence */}
       {enabled && (
-        <View style={styles.telemetryRow}>
+        <TouchableOpacity
+          style={styles.telemetryRow}
+          onPress={() => setShowStatsModal(true)}
+          activeOpacity={0.7}
+        >
           <View style={styles.telemetryItem}>
             <Ionicons name="time-outline" size={13} color={colors.textSecondary} />
             <Text style={styles.telemetryText}>
@@ -263,9 +269,12 @@ export const JarvisStatusRow: React.FC<JarvisStatusRowProps> = ({
             <Text style={styles.telemetryText}>
               Wakes today: <Text style={styles.telemetryBold}>{wakeCount}</Text>
             </Text>
+            <Ionicons name="chevron-forward" size={12} color={colors.textSecondary} style={{ marginLeft: 4 }} />
           </View>
-        </View>
+        </TouchableOpacity>
       )}
+
+      <JarvisStatsModal visible={showStatsModal} onClose={() => setShowStatsModal(false)} />
     </View>
   );
 };

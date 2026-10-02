@@ -18,7 +18,7 @@ import com.ritvik.jammusic.jarvis.JarvisAccessibilityService
 object WhatsAppHandler {
     private const val TAG = "JarvisWhatsAppHandler"
 
-    fun sendWhatsAppMessage(context: Context, contactQuery: String, messageText: String): CommandResult {
+    fun sendWhatsAppMessage(context: Context, contactQuery: String, messageText: String, draftOnly: Boolean = false): CommandResult {
         val query = contactQuery.trim()
         val message = messageText.trim()
 
@@ -84,8 +84,8 @@ object WhatsAppHandler {
         val targetName = matchedName ?: query
         val cleanNumber = if (matchedNumber != null) formatPhoneForWhatsApp(matchedNumber!!) else null
 
-        // 4. Arm Accessibility Service for hands-free auto-send if enabled
-        val a11yActive = JarvisAccessibilityService.isServiceEnabled
+        // 4. Arm Accessibility Service for hands-free auto-send only if NOT draftOnly
+        val a11yActive = JarvisAccessibilityService.isServiceEnabled && !draftOnly
         if (a11yActive) {
             JarvisAccessibilityService.triggerAutoSend(targetName)
         }
@@ -121,12 +121,12 @@ object WhatsAppHandler {
         // 6. Launch WhatsApp Intent
         return try {
             context.startActivity(intent)
-            Log.i(TAG, "WhatsApp chat opened for $targetName (handsFreeAutoSend=$a11yActive)")
+            Log.i(TAG, "WhatsApp chat opened for $targetName (handsFreeAutoSend=$a11yActive, draftOnly=$draftOnly)")
 
-            val spokenReply = if (a11yActive) {
-                "Sending WhatsApp to $targetName..."
-            } else {
-                "Opening WhatsApp for $targetName. Please tap send."
+            val spokenReply = when {
+                draftOnly -> "Drafted your message to $targetName, sir. Review and tap send."
+                a11yActive -> "Sending WhatsApp to $targetName..."
+                else -> "Opening WhatsApp for $targetName. Please tap send."
             }
 
             CommandResult(
@@ -137,7 +137,8 @@ object WhatsAppHandler {
                     "contact" to targetName,
                     "phone" to (cleanNumber ?: ""),
                     "message" to message,
-                    "autoSend" to a11yActive.toString()
+                    "autoSend" to a11yActive.toString(),
+                    "draftOnly" to draftOnly.toString()
                 )
             )
         } catch (e: ActivityNotFoundException) {

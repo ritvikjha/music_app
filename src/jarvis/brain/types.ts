@@ -79,7 +79,12 @@ export type IntentName =
   | 'START_AUTO_SCROLL'
   | 'STOP_AUTOMATION'
   | 'TAP_ELEMENT'
-  | 'TYPE_TEXT';
+  | 'TYPE_TEXT'
+  // Extensibility & Safety
+  | 'EXECUTE_ROUTINE'
+  | 'CREATE_ROUTINE'
+  | 'CREATE_ALIAS'
+  | 'EMERGENCY';
 
 
 

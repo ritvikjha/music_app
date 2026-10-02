@@ -11,6 +11,7 @@
 import type { IntentResult, IntentName, BrainContext } from './types';
 import { parseLocalIntent } from './localIntents';
 import { queryLlmBrain } from './llmClient';
+import { resolveAlias, getRoutine } from '../memory/routines';
 
 export const VALID_INTENTS: Set<IntentName> = new Set([
   'PLAY_SONG',
@@ -76,6 +77,10 @@ export const VALID_INTENTS: Set<IntentName> = new Set([
   'STOP_AUTOMATION',
   'TAP_ELEMENT',
   'TYPE_TEXT',
+  'EXECUTE_ROUTINE',
+  'CREATE_ROUTINE',
+  'CREATE_ALIAS',
+  'EMERGENCY',
 ]);
 
 export interface MemoryTurn {
@@ -224,7 +229,26 @@ export async function parseIntent(
   }
 
   // 0. Contextual Anaphora Resolution ("Play more from him", "Message him", "Open it")
-  const transcript = resolveAnaphora(rawTranscript, context);
+  const resolvedTranscript = resolveAnaphora(rawTranscript, context);
+
+  // 0b. Custom Phrase Alias Resolution (e.g. "go dark" -> "night protocol")
+  const aliased = await resolveAlias(resolvedTranscript);
+  const transcript = aliased || resolvedTranscript;
+
+  // 0c. User-Defined Multi-Step Routine Check (e.g. "leaving home" -> [WiFi off, BT on, play usual])
+  const routineActions = await getRoutine(transcript);
+  if (routineActions && routineActions.length > 0) {
+    const routineResult: IntentResult = {
+      intent: 'EXECUTE_ROUTINE',
+      slots: { routineName: transcript, actions: routineActions },
+      confidence: 1.0,
+      spokenReply: `Executing ${transcript} routine, sir.`,
+      source: 'local',
+      latencyMs: Date.now() - startTime,
+    };
+    recordMemoryTurn(routineResult);
+    return routineResult;
+  }
 
   // Tier 1: Local Rule-Based Matcher (< 5 ms)
   const localResult = parseLocalIntent(transcript, context);
