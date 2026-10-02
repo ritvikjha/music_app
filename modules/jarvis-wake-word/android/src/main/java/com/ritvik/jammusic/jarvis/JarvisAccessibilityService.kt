@@ -104,6 +104,33 @@ class JarvisAccessibilityService : AccessibilityService() {
         }
 
         /**
+         * Extracts visible text from the active window.
+         * Powers Screen Q&A ("What's on my screen", "Summarize this screen", etc.)
+         */
+        fun getScreenVisibleText(maxChars: Int = 1000): String {
+            val s = instance ?: return ""
+            val root = s.rootInActiveWindow ?: return ""
+            val textList = mutableListOf<String>()
+
+            fun crawl(node: AccessibilityNodeInfo?) {
+                if (node == null || textList.joinToString(" ").length >= maxChars) return
+                val t = node.text?.toString()?.trim()
+                val d = node.contentDescription?.toString()?.trim()
+                if (!t.isNullOrBlank() && t.length > 1 && !textList.contains(t)) {
+                    textList.add(t)
+                } else if (!d.isNullOrBlank() && d.length > 2 && !textList.contains(d)) {
+                    textList.add(d)
+                }
+                for (i in 0 until node.childCount) {
+                    crawl(node.getChild(i))
+                }
+            }
+
+            crawl(root)
+            return textList.joinToString(". ")
+        }
+
+        /**
          * Open any app by natural name or package
          */
         fun openApp(context: Context, appName: String): CommandResult {

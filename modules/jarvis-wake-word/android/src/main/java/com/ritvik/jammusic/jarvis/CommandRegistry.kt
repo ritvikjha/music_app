@@ -853,6 +853,41 @@ object CommandRegistry {
         )
 
         // ==========================================
+        // 21. SCREEN INTELLIGENCE ("Eyes of Jarvis")
+        // ("What is on my screen", "Read my screen", "Summarize this screen", "Screen par kya hai")
+        // ==========================================
+        COMMANDS.add(
+            CommandDefinition(
+                id = "SCREEN_INTELLIGENCE",
+                patterns = listOf(
+                    Regex("""^(?:what(?:'s|\s+is)\s+(?:on\s+)?(?:my\s+|the\s+)?screen|what\s+am\s+i\s+looking\s+at)$"""),
+                    Regex("""^(?:read\s+(?:this\s+|my\s+)?screen|summarize\s+(?:this\s+|my\s+)?screen)$"""),
+                    Regex("""^(?:screen\s*(?:padho|padh\s*do|batao|par\s*kya\s*hai)|kya\s+dikha\s+raha\s+hai)$""")
+                ),
+                slotExtractor = { emptyMap() },
+                handler = { _, _ ->
+                    val screenText = JarvisAccessibilityService.getScreenVisibleText(600)
+                    if (screenText.isNotBlank()) {
+                        val sentences = screenText.split(Regex("""[.!?]+""")).map { it.trim() }.filter { it.length > 10 }
+                        val summary = if (sentences.size > 2) sentences.take(2).joinToString(". ") + "." else screenText
+                        CommandResult(
+                            success = true,
+                            spokenReply = "On your screen, I see: $summary",
+                            actionId = "SCREEN_INTELLIGENCE"
+                        )
+                    } else {
+                        CommandResult(
+                            success = true,
+                            spokenReply = "I can't inspect the screen right now, sir. Please make sure the Jarvis Accessibility Service is active in Settings.",
+                            actionId = "SCREEN_INTELLIGENCE"
+                        )
+                    }
+                },
+                lockScreenSafe = false
+            )
+        )
+
+        // ==========================================
         // 20. LEVEL 6: APP UI AUTOMATION & STOP
         // ("Stop automation", "Stop scrolling", "Scroll down", "Scroll up", "Auto scroll")
         // ==========================================
