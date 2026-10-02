@@ -18,9 +18,651 @@ const io = new Server(server, {
 const PORT = process.env.PORT || 3000;
 const DUEL_STATE_FILE = process.env.DUEL_STATE_FILE || path.join(__dirname, 'data', 'duel-state.json');
 
+app.use(express.json());
+
 // Health check endpoint for Fly.io and uptime monitors
 app.get('/', (req, res) => {
   res.json({ status: 'ok', service: 'jam-sync-server' });
+});
+
+// ==========================================
+// Jarvis Brain LLM Proxy (Stage 3)
+// Primary: Gemini 2.0 Flash (Free Tier)
+// Secondary: Groq LLaMA 3.3 70B (Free Tier)
+// ==========================================
+
+const deviceRateLimits = new Map();
+function checkRateLimit(deviceId, maxRequests = 30, windowMs = 60000) {
+  const now = Date.now();
+  let record = deviceRateLimits.get(deviceId);
+  if (!record || now > record.resetTime) {
+    record = { count: 1, resetTime: now + windowMs };
+    deviceRateLimits.set(deviceId, record);
+    return true;
+  }
+  if (record.count >= maxRequests) {
+    return false;
+  }
+  record.count++;
+  return true;
+}
+
+// Clean up expired rate limit records periodically
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, record] of deviceRateLimits) {
+    if (now > record.resetTime) deviceRateLimits.delete(id);
+  }
+}, 300000);
+
+const JARVIS_SYSTEM_PROMPT = `You are J.A.R.V.I.S., a highly intelligent, calm, sophisticated AI assistant (inspired by Tony Stark's assistant).
+Your personality: polite, articulate, dry British wit, loyal, concise (maximum 2 sentences per spokenReply). Address the user occasionally as "sir" or by context.
+Analyze the user's transcript, conversation context, personal memory, and device state, then map it into a structured intent JSON object.
+
+Allowed IntentNames:
+- PLAY_SONG: slots: { query: string, artist?: string }
+- PLAY_ARTIST: slots: { artist: string }
+- PLAY_TRENDING: slots: {}
+- PLAY_SIMILAR: slots: {}
+- PLAY_MOOD: slots: { mood: string, query?: string } (e.g., "play something relaxing for sleep", "upbeat gym workout vibes")
+- PLAY_MY_USUAL: slots: {} (plays the user's learned favorite genre or vibe)
+- PAUSE: slots: {}
+- RESUME: slots: {}
+- NEXT: slots: {}
+- PREVIOUS: slots: {}
+- SEEK: slots: { seconds: number, relative: boolean }
+- VOLUME_SET: slots: { percent: number }
+- VOLUME_UP: slots: {}
+- VOLUME_DOWN: slots: {}
+- LIKE: slots: {}
+- UNLIKE: slots: {}
+- ADD_TO_QUEUE: slots: { query: string }
+- PLAY_NEXT: slots: { query: string }
+- SHUFFLE: slots: { on: boolean }
+- REPEAT: slots: { mode: "off" | "all" | "one" }
+- SLEEP_TIMER: slots: { minutes: number }
+- CANCEL_SLEEP_TIMER: slots: {}
+- WHAT_IS_PLAYING: slots: {}
+- OPEN_SCREEN: slots: { screen: "home" | "library" | "jam" | "games" | "profile" | "player" | "friends" }
+- CLEAR_QUEUE: slots: {}, needsConfirmation: true
+- LEAVE_ROOM: slots: {}
+- STATUS_REPORT: slots: {}
+- PROTOCOL_NIGHT: slots: {}
+- PROTOCOL_PARTY: slots: {}
+- PROTOCOL_STEALTH: slots: {}
+- PROTOCOL_MORNING: slots: {}
+- PROTOCOL_DRIVE: slots: {}
+- PROTOCOL_FOCUS: slots: {}
+- REMEMBER: slots: { key: string, value: string } (stores facts, e.g. "remember my car parking is spot B4" -> key: "car parking", value: "spot B4")
+- RECALL: slots: { query: string } (retrieves saved facts, e.g. "where did I park my car?")
+- SET_REMINDER: slots: { task: string, time?: string }
+- GET_WEATHER: slots: { location?: string }
+- GET_TIME: slots: { timezone?: string }
+- GET_DATE: slots: {}
+- WEB_SEARCH: slots: { query: string }
+- CALCULATE: slots: { expression: string }
+- CONVERT_UNITS: slots: { value: number, from: string, to: string }
+- CHECK_CALENDAR: slots: {}
+- CONTACT_LOOKUP: slots: { name: string }
+- MORNING_BRIEFING: slots: {}
+- VISION_QUERY: slots: { question?: string }
+- CHAT: slots: { reply: string } (for general questions, science, trivia, conversation, greetings; reply must be witty and under 2 sentences)
+- UNKNOWN: slots: { raw: string }
+
+Return ONLY valid JSON matching this schema:
+{
+  "intent": "<IntentName>",
+  "slots": { ... },
+  "confidence": <number between 0.0 and 1.0>,
+  "spokenReply": "<concise, natural spoken reply for the user, max 2 sentences>",
+  "needsConfirmation": <boolean, optional>,
+  "source": "llm"
+}`;
+
+async function callGemini(promptText, apiKey, timeoutMs = 6000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts: [{ text: JARVIS_SYSTEM_PROMPT + '\n\n' + promptText }] }],
+        generationConfig: {
+          response_mime_type: 'application/json',
+          temperature: 0.1,
+          maxOutputTokens: 300
+        }
+      }),
+      signal: controller.signal
+    });
+    clearTimeout(timer);
+    if (!res.ok) throw new Error(`Gemini status ${res.status}`);
+    const data = await res.json();
+    const candidate = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!candidate) throw new Error('Empty Gemini response');
+    const parsed = JSON.parse(candidate);
+    parsed.source = 'llm';
+    return parsed;
+  } catch (err) {
+    clearTimeout(timer);
+    throw err;
+  }
+}
+
+async function callGroq(promptText, apiKey, timeoutMs = 6000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const url = 'https://api.groq.com/openai/v1/chat/completions';
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: 'llama-3.3-70b-versatile',
+        messages: [
+          { role: 'system', content: JARVIS_SYSTEM_PROMPT },
+          { role: 'user', content: promptText }
+        ],
+        response_format: { type: 'json_object' },
+        temperature: 0.1,
+        max_tokens: 300
+      }),
+      signal: controller.signal
+    });
+    clearTimeout(timer);
+    if (!res.ok) throw new Error(`Groq status ${res.status}`);
+    const data = await res.json();
+    const content = data.choices?.[0]?.message?.content;
+    if (!content) throw new Error('Empty Groq response');
+    const parsed = JSON.parse(content);
+    parsed.source = 'llm';
+    return parsed;
+  } catch (err) {
+    clearTimeout(timer);
+    throw err;
+  }
+}
+
+app.post('/jarvis/brain', async (req, res) => {
+  const startTime = Date.now();
+
+  // 1. Verify shared token if configured
+  const token = req.headers['x-jarvis-token'];
+  const expectedToken = process.env.JARVIS_APP_TOKEN || 'jarvis-jam-secret-2026';
+  if (token && token !== expectedToken) {
+    return res.status(401).json({ error: 'Invalid auth token' });
+  }
+
+  // 2. Rate limiting per device / IP (30 req/min)
+  const deviceId = req.body?.deviceId || req.ip || 'anonymous';
+  if (!checkRateLimit(deviceId)) {
+    return res.status(429).json({ error: 'Rate limit exceeded (30 req/min)' });
+  }
+
+  const {
+    transcript,
+    currentSongTitle,
+    currentSongArtist,
+    isPlaying,
+    queueLength,
+    history,
+    userNotes,
+    musicProfile,
+    timeOfDay,
+    dayOfWeek,
+    batteryPercent,
+    isCharging,
+    networkType
+  } = req.body || {};
+  if (!transcript || typeof transcript !== 'string') {
+    return res.status(400).json({ error: 'Missing transcript' });
+  }
+
+  const prompt = `User transcript: "${transcript}"
+Context:
+- Current song: "${currentSongTitle || 'None'}" by "${currentSongArtist || 'Unknown'}"
+- Playing: ${isPlaying ? 'yes' : 'no'}
+- Queue length: ${queueLength || 0}
+- Recent history: ${JSON.stringify(history || [])}
+- Time of day: ${timeOfDay || 'unknown'}, Day: ${dayOfWeek || 'unknown'}
+- Device Battery: ${batteryPercent !== undefined ? batteryPercent + '%' : 'unknown'} (Charging: ${isCharging ? 'yes' : 'no'})
+- Network: ${networkType || 'unknown'}
+- User Memory/Notes: ${userNotes && userNotes.length > 0 ? JSON.stringify(userNotes) : 'None'}
+- User Music Profile: ${musicProfile ? JSON.stringify(musicProfile) : 'None'}
+
+Map this to the appropriate intent schema in JSON.`;
+
+  const geminiKey = process.env.GEMINI_API_KEY;
+  const groqKey = process.env.GROQ_API_KEY;
+
+  try {
+    if (geminiKey) {
+      try {
+        const result = await callGemini(prompt, geminiKey);
+        result.latencyMs = Date.now() - startTime;
+        return res.json(result);
+      } catch (geminiErr) {
+        console.warn('[Jarvis Server] Gemini error, trying Groq fallback:', geminiErr.message);
+      }
+    }
+
+    if (groqKey) {
+      try {
+        const result = await callGroq(prompt, groqKey);
+        result.latencyMs = Date.now() - startTime;
+        return res.json(result);
+      } catch (groqErr) {
+        console.warn('[Jarvis Server] Groq error:', groqErr.message);
+      }
+    }
+
+    // Fallback if neither API is configured or available
+    return res.json({
+      intent: 'UNKNOWN',
+      slots: { raw: transcript },
+      confidence: 0,
+      spokenReply: "I couldn't process that right now.",
+      source: 'llm',
+      latencyMs: Date.now() - startTime
+    });
+  } catch (err) {
+    console.error('[Jarvis Server] Brain route error:', err.message);
+    return res.json({
+      intent: 'UNKNOWN',
+      slots: { raw: transcript },
+      confidence: 0,
+      spokenReply: "Sorry, I had trouble understanding that.",
+      source: 'llm',
+      latencyMs: Date.now() - startTime
+    });
+  }
+});
+
+// ==========================================
+// Phase 1: Real-Time Zero-Latency Streaming LLM
+// Endpoint: POST /jarvis/brain/stream
+// Streams SSE tokens to client in < 250ms
+// ==========================================
+app.post('/jarvis/brain/stream', async (req, res) => {
+  const token = req.headers['x-jarvis-token'];
+  const expectedToken = process.env.JARVIS_APP_TOKEN || 'jarvis-jam-secret-2026';
+  if (token && token !== expectedToken) {
+    return res.status(401).json({ error: 'Invalid auth token' });
+  }
+
+  const deviceId = req.body?.deviceId || req.ip || 'anonymous';
+  if (!checkRateLimit(deviceId)) {
+    return res.status(429).json({ error: 'Rate limit exceeded' });
+  }
+
+  const { prompt, transcript, context } = req.body || {};
+  const userText = prompt || transcript;
+  if (!userText) {
+    return res.status(400).json({ error: 'Missing prompt or transcript' });
+  }
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders?.();
+
+  const geminiKey = process.env.GEMINI_API_KEY;
+  const groqKey = process.env.GROQ_API_KEY;
+
+  const systemInstruction = `You are J.A.R.V.I.S., a sophisticated AI assistant.
+Speak concisely with polite British wit (maximum 2 sentences).
+Directly answer the user's question without preamble or filler.`;
+
+  // 1. Try Gemini 2.0 Flash Streaming
+  if (geminiKey) {
+    try {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:streamGenerateContent?alt=sse&key=${geminiKey}`;
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [
+            {
+              role: 'user',
+              parts: [{ text: systemInstruction + '\n\nUser: ' + userText }]
+            }
+          ],
+          generationConfig: {
+            temperature: 0.3,
+            maxOutputTokens: 200
+          }
+        })
+      });
+
+      if (response.ok && response.body) {
+        const reader = response.body.getReader ? response.body.getReader() : null;
+        let fullText = '';
+
+        if (reader) {
+          const decoder = new TextDecoder();
+          let buffer = '';
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                const jsonStr = line.slice(6).trim();
+                if (jsonStr) {
+                  try {
+                    const parsed = JSON.parse(jsonStr);
+                    const chunk = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
+                    if (chunk) {
+                      fullText += chunk;
+                      res.write(`data: ${JSON.stringify({ type: 'token', token: chunk })}\n\n`);
+                    }
+                  } catch (e) {}
+                }
+              }
+            }
+          }
+        } else {
+          // Node fetch stream
+          for await (const chunk of response.body) {
+            const str = chunk.toString();
+            const lines = str.split('\n');
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                const jsonStr = line.slice(6).trim();
+                if (jsonStr) {
+                  try {
+                    const parsed = JSON.parse(jsonStr);
+                    const tokenChunk = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
+                    if (tokenChunk) {
+                      fullText += tokenChunk;
+                      res.write(`data: ${JSON.stringify({ type: 'token', token: tokenChunk })}\n\n`);
+                    }
+                  } catch (e) {}
+                }
+              }
+            }
+          }
+        }
+
+        res.write(`data: ${JSON.stringify({ type: 'done', fullText: fullText.trim() })}\n\n`);
+        return res.end();
+      }
+    } catch (err) {
+      console.warn('[Jarvis Stream] Gemini streaming error, trying Groq fallback:', err.message);
+    }
+  }
+
+  // 2. Groq LLaMA 3.3 Streaming Fallback
+  if (groqKey) {
+    try {
+      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${groqKey}`
+        },
+        body: JSON.stringify({
+          model: 'llama-3.3-70b-versatile',
+          stream: true,
+          messages: [
+            { role: 'system', content: systemInstruction },
+            { role: 'user', content: userText }
+          ],
+          max_tokens: 200,
+          temperature: 0.3
+        })
+      });
+
+      if (response.ok && response.body) {
+        let fullText = '';
+        for await (const chunk of response.body) {
+          const str = chunk.toString();
+          const lines = str.split('\n');
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const dataStr = line.slice(6).trim();
+              if (dataStr === '[DONE]') continue;
+              try {
+                const parsed = JSON.parse(dataStr);
+                const delta = parsed.choices?.[0]?.delta?.content;
+                if (delta) {
+                  fullText += delta;
+                  res.write(`data: ${JSON.stringify({ type: 'token', token: delta })}\n\n`);
+                }
+              } catch (e) {}
+            }
+          }
+        }
+        res.write(`data: ${JSON.stringify({ type: 'done', fullText: fullText.trim() })}\n\n`);
+        return res.end();
+      }
+    } catch (err) {
+      console.warn('[Jarvis Stream] Groq streaming error:', err.message);
+    }
+  }
+
+  // Fallback single message
+  const fallback = "I'm standing by, sir.";
+  res.write(`data: ${JSON.stringify({ type: 'token', token: fallback })}\n\n`);
+  res.write(`data: ${JSON.stringify({ type: 'done', fullText: fallback })}\n\n`);
+  res.end();
+});
+
+// ==========================================
+// Phase 2: Multimodal Camera Vision
+// Endpoint: POST /jarvis/vision
+// Analyzes base64 JPEG from Camera2 via Gemini 2.0 Flash
+// ==========================================
+app.post('/jarvis/vision', async (req, res) => {
+  const startTime = Date.now();
+  const token = req.headers['x-jarvis-token'];
+  const expectedToken = process.env.JARVIS_APP_TOKEN || 'jarvis-jam-secret-2026';
+  if (token && token !== expectedToken) {
+    return res.status(401).json({ error: 'Invalid auth token' });
+  }
+
+  const { imageBase64, prompt } = req.body || {};
+  if (!imageBase64) {
+    return res.status(400).json({ error: 'Missing imageBase64' });
+  }
+
+  const geminiKey = process.env.GEMINI_API_KEY;
+  if (!geminiKey) {
+    return res.json({
+      spokenReply: "Vision processing requires a Gemini API key on the server, sir.",
+      description: "Server missing GEMINI_API_KEY",
+      latencyMs: Date.now() - startTime
+    });
+  }
+
+  const queryPrompt = prompt && prompt.trim().length > 0
+    ? prompt
+    : "Describe what is directly in front of the camera concisely.";
+
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              {
+                text: `You are J.A.R.V.I.S., Tony Stark's sophisticated AI assistant.
+Inspect this image captured from the user's phone camera.
+Answer the user's inquiry concisely in 1-2 spoken sentences with calm, polite British poise.
+User prompt: "${queryPrompt}"`
+              },
+              {
+                inlineData: {
+                  mimeType: 'image/jpeg',
+                  data: imageBase64
+                }
+              }
+            ]
+          }
+        ],
+        generationConfig: {
+          temperature: 0.2,
+          maxOutputTokens: 150
+        }
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Gemini vision HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+    const spokenReply = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim()
+      || "I see the image, but could not discern the details, sir.";
+
+    return res.json({
+      spokenReply,
+      description: spokenReply,
+      latencyMs: Date.now() - startTime
+    });
+  } catch (err) {
+    console.error('[Jarvis Vision] Error:', err.message);
+    return res.json({
+      spokenReply: "I had difficulty analyzing that visual feed, sir.",
+      description: err.message,
+      latencyMs: Date.now() - startTime
+    });
+  }
+});
+
+// ==========================================
+// Phase 2: Screen Understanding & Q&A
+// Endpoint: POST /jarvis/screen-qa
+// Analyzes accessibility hierarchy & foreground app
+// ==========================================
+app.post('/jarvis/screen-qa', async (req, res) => {
+  const startTime = Date.now();
+  const token = req.headers['x-jarvis-token'];
+  const expectedToken = process.env.JARVIS_APP_TOKEN || 'jarvis-jam-secret-2026';
+  if (token && token !== expectedToken) {
+    return res.status(401).json({ error: 'Invalid auth token' });
+  }
+
+  const { screenContent, appName, packageName, query } = req.body || {};
+
+  // Compact screen elements: filter empty and take top texts
+  const elements = Array.isArray(screenContent)
+    ? screenContent
+        .map(el => (el.text || el.desc || '').trim())
+        .filter(t => t.length > 0)
+        .slice(0, 35)
+    : [];
+
+  const summary = elements.join(' | ');
+  const userQuery = query || "Summarize what is on my screen.";
+
+  const promptText = `Active Application: ${appName || packageName || 'Current Screen'}
+Visible Screen Text & Elements:
+${summary || 'No text elements detected.'}
+
+User Question: "${userQuery}"
+
+Provide a natural, polite 1-2 sentence spoken summary answering the user's question directly.`;
+
+  const geminiKey = process.env.GEMINI_API_KEY;
+  const groqKey = process.env.GROQ_API_KEY;
+
+  if (geminiKey) {
+    try {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`;
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [
+            {
+              role: 'user',
+              parts: [
+                {
+                  text: `You are J.A.R.V.I.S., a sophisticated AI assistant.
+${promptText}`
+                }
+              ]
+            }
+          ],
+          generationConfig: {
+            temperature: 0.2,
+            maxOutputTokens: 150
+          }
+        })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const reply = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+        if (reply) {
+          return res.json({
+            spokenReply: reply,
+            latencyMs: Date.now() - startTime
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('[Jarvis ScreenQA] Gemini error:', e.message);
+    }
+  }
+
+  if (groqKey) {
+    try {
+      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${groqKey}`
+        },
+        body: JSON.stringify({
+          model: 'llama-3.3-70b-versatile',
+          messages: [
+            { role: 'system', content: 'You are J.A.R.V.I.S. Provide a 1-2 sentence concise spoken answer.' },
+            { role: 'user', content: promptText }
+          ],
+          max_tokens: 150,
+          temperature: 0.2
+        })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const reply = data.choices?.[0]?.message?.content?.trim();
+        if (reply) {
+          return res.json({
+            spokenReply: reply,
+            latencyMs: Date.now() - startTime
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('[Jarvis ScreenQA] Groq error:', e.message);
+    }
+  }
+
+  // Fallback if no LLM configured
+  const topText = elements.slice(0, 3).join(', ');
+  const fallback = topText
+    ? `You are in ${appName || 'an app'}, viewing ${topText}, sir.`
+    : `You are currently viewing ${appName || 'your screen'}, sir.`;
+
+  return res.json({
+    spokenReply: fallback,
+    latencyMs: Date.now() - startTime
+  });
 });
 
 /**
