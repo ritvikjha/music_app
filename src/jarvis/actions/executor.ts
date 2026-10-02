@@ -30,6 +30,8 @@ import { saveRoutine, getRoutine, saveAlias } from '../memory/routines';
 import { parseLocalIntent } from '../brain/localIntents';
 import { verifySpeakerForIntent } from '../safety/voiceId';
 import { recordCommandExecution } from '../eventLogger';
+import { queryScreenQa, queryCameraVision } from '../brain/visionClient';
+import { takeCameraSnapshot } from '../../../modules/jarvis-wake-word';
 
 // Optional native volume control helper
 let JarvisNativeModule: any = null;
@@ -968,6 +970,66 @@ async function executeLiveIntent(
       };
     }
 
+    case 'SCREEN_QUERY': {
+      try {
+        const isEnabled = JarvisNativeModule?.isAccessibilityServiceEnabled?.();
+        if (!isEnabled) {
+          return {
+            ok: false,
+            spokenReply: 'Please enable the Jarvis Accessibility Service in Android Settings so I can inspect your screen, sir.',
+            toast: { message: 'Enable Accessibility for Screen Vision', type: 'info' },
+          };
+        }
+
+        const screenContent = JarvisNativeModule?.inspectScreen?.() || [];
+        const fgApp = JarvisNativeModule?.getForegroundApp?.() || { packageName: '', appName: 'Current screen' };
+
+        const query = slots?.query || slots?.raw || 'Summarize what is on my screen.';
+        const result = await queryScreenQa(screenContent, fgApp.appName || fgApp.packageName, query);
+
+        return {
+          ok: true,
+          spokenReply: result.spokenReply,
+          toast: { message: `Screen: ${fgApp.appName || 'Active App'}`, type: 'info' },
+        };
+      } catch (err: any) {
+        return {
+          ok: false,
+          spokenReply: "I couldn't analyze your current screen, sir.",
+          toast: { message: 'Screen query failed', type: 'error' },
+        };
+      }
+    }
+
+    case 'VISION_QUERY':
+    case 'CAMERA_VISION': {
+      try {
+        const prompt = slots?.prompt || slots?.query || slots?.raw || 'Describe what you see in front of the camera.';
+
+        const imageBase64 = await takeCameraSnapshot();
+        if (!imageBase64) {
+          return {
+            ok: false,
+            spokenReply: 'I was unable to access the camera to see in front of you, sir. Please ensure camera permissions are allowed.',
+            toast: { message: 'Camera Capture Failed', type: 'error' },
+          };
+        }
+
+        const result = await queryCameraVision(imageBase64, prompt);
+        return {
+          ok: true,
+          spokenReply: result.spokenReply,
+          toast: { message: 'Visual Scene Analyzed', type: 'success' },
+        };
+      } catch (err: any) {
+        return {
+          ok: false,
+          spokenReply: "I encountered an error trying to see through the camera, sir.",
+          toast: { message: 'Vision error', type: 'error' },
+        };
+      }
+    }
+
     case 'WHATSAPP_MESSAGE': {
       const contact = slots?.contact || '';
       const message = slots?.message || '';
@@ -1387,6 +1449,40 @@ async function executeFallbackIntent(intentResult: IntentResult): Promise<Action
         briefing = 'Good morning, sir. Systems operational.';
       }
       return { ok: true, spokenReply: briefing };
+    }
+
+    case 'SCREEN_QUERY': {
+      try {
+        const isEnabled = JarvisNativeModule?.isAccessibilityServiceEnabled?.();
+        if (!isEnabled) {
+          return {
+            ok: false,
+            spokenReply: 'Please enable the Jarvis Accessibility Service in Android Settings so I can inspect your screen, sir.',
+          };
+        }
+        const screenContent = JarvisNativeModule?.inspectScreen?.() || [];
+        const fgApp = JarvisNativeModule?.getForegroundApp?.() || { packageName: '', appName: 'Current screen' };
+        const query = slots?.query || slots?.raw || 'Summarize what is on my screen.';
+        const result = await queryScreenQa(screenContent, fgApp.appName || fgApp.packageName, query);
+        return { ok: true, spokenReply: result.spokenReply };
+      } catch {
+        return { ok: false, spokenReply: "I couldn't inspect your screen right now, sir." };
+      }
+    }
+
+    case 'VISION_QUERY':
+    case 'CAMERA_VISION': {
+      try {
+        const prompt = slots?.prompt || slots?.query || slots?.raw || 'Describe what you see in front of the camera.';
+        const imageBase64 = await takeCameraSnapshot();
+        if (!imageBase64) {
+          return { ok: false, spokenReply: 'Camera access is required to see in front of you, sir.' };
+        }
+        const result = await queryCameraVision(imageBase64, prompt);
+        return { ok: true, spokenReply: result.spokenReply };
+      } catch {
+        return { ok: false, spokenReply: "I couldn't analyze the camera view, sir." };
+      }
     }
 
     case 'PROTOCOL_DRIVE': {

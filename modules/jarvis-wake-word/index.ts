@@ -198,6 +198,14 @@ export async function speak(text: string): Promise<void> {
 }
 
 /**
+ * Speak a streaming text chunk aloud using Android's on-device TextToSpeech.
+ * If queueAdd is true, appends to the active audio queue without dropping focus.
+ */
+export async function speakChunk(text: string, queueAdd = false): Promise<void> {
+  return await JarvisWakeWordNative.speakChunk(text, queueAdd);
+}
+
+/**
  * Stop active speech synthesis immediately.
  */
 export function stopSpeaking(): void {
@@ -651,6 +659,22 @@ export async function captureVoiceIdSample(durationMs: number = 2500): Promise<{
   }
 }
 
+// ==========================================
+// Multimodal Camera Vision
+// ==========================================
+
+/**
+ * Capture a silent, fast rear-camera frame snapshot.
+ * Returns Base64-encoded JPEG image string, or null on failure.
+ */
+export async function takeCameraSnapshot(): Promise<string | null> {
+  try {
+    return await JarvisWakeWordNative.takeCameraSnapshot?.() ?? null;
+  } catch (err: any) {
+    console.warn('[Jarvis Vision] Camera snapshot error:', err);
+    return null;
+  }
+}
 
 export type {
   WakeWordDetection,

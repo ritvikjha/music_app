@@ -1426,12 +1426,51 @@ const matchAutomation: PatternMatcher = (text) => {
   return null;
 };
 
+// ==========================================
+// Phase 2: Screen & Multimodal Vision Matcher
+// ==========================================
+
+const matchVisionAndScreen: PatternMatcher = (text) => {
+  const t = text.toLowerCase().trim();
+
+  // 1. Screen Vision & Understanding
+  if (
+    /^(?:what(?:'s|\s+is)\s+(?:on\s+)?(?:my\s+)?screen|read\s+(?:my\s+)?screen|summarize\s+(?:this\s+)?(?:page|screen|post|article|feed)|what\s+am\s+i\s+looking\s+at\s+on\s+screen|explain\s+(?:this\s+)?screen|screen\s+par\s+kya\s+hai|kya\s+dikh\s+raha\s+hai\s+screen|who\s+(?:texted|messaged)\s+me)$/i.test(t) ||
+    /^(?:what\s+does\s+(?:this\s+)?screen\s+say|screen\s+padh\s+ke\s+batao|kya\s+likha\s+hai\s+screen\s+par)$/i.test(t)
+  ) {
+    return {
+      intent: 'SCREEN_QUERY',
+      slots: { query: text },
+      confidence: 0.95,
+      spokenReply: 'Analyzing your screen, sir...',
+      source: 'local',
+    };
+  }
+
+  // 2. Camera Multimodal Vision ("Eyes of Jarvis")
+  if (
+    /^(?:look\s+at\s+this|what\s+is\s+this(?:\s+thing|\s+object)?|what\s+am\s+i\s+looking\s+at|what(?:'s|\s+is)\s+in\s+front\s+of\s+me|describe\s+what\s+you\s+see|describe\s+this|identify\s+this(?:\s+object)?|read\s+this\s+(?:sign|label|text)|ye\s+kya\s+hai|samne\s+kya\s+hai|ise\s+dekho|dekho\s+ise|kya\s+dikh\s+raha\s+hai)$/i.test(t) ||
+    /^(?:take\s+a\s+look|jarvis\s+look|look\s+in\s+front|what\s+do\s+you\s+see)$/i.test(t)
+  ) {
+    return {
+      intent: 'CAMERA_VISION',
+      slots: { prompt: text },
+      confidence: 0.95,
+      spokenReply: 'Looking now, sir...',
+      source: 'local',
+    };
+  }
+
+  return null;
+};
+
 // Ordered list of matcher functions (first match wins)
 const MATCHERS: PatternMatcher[] = [
   matchEmergency,
   matchGreetings,
   matchRoutinesAndAliases,
   matchAutomation,
+  matchVisionAndScreen,
   matchStarkEasterEggs,
   matchStarkProtocols,
   matchMorningBriefing,

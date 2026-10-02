@@ -70,6 +70,8 @@ export const VALID_INTENTS: Set<IntentName> = new Set([
   // Level 5
   'MORNING_BRIEFING',
   'VISION_QUERY',
+  'SCREEN_QUERY',
+  'CAMERA_VISION',
   // Level 6
   'GREETING',
   'APP_AUTOMATION',

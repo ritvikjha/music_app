@@ -283,6 +283,388 @@ Map this to the appropriate intent schema in JSON.`;
   }
 });
 
+// ==========================================
+// Phase 1: Real-Time Zero-Latency Streaming LLM
+// Endpoint: POST /jarvis/brain/stream
+// Streams SSE tokens to client in < 250ms
+// ==========================================
+app.post('/jarvis/brain/stream', async (req, res) => {
+  const token = req.headers['x-jarvis-token'];
+  const expectedToken = process.env.JARVIS_APP_TOKEN || 'jarvis-jam-secret-2026';
+  if (token && token !== expectedToken) {
+    return res.status(401).json({ error: 'Invalid auth token' });
+  }
+
+  const deviceId = req.body?.deviceId || req.ip || 'anonymous';
+  if (!checkRateLimit(deviceId)) {
+    return res.status(429).json({ error: 'Rate limit exceeded' });
+  }
+
+  const { prompt, transcript, context } = req.body || {};
+  const userText = prompt || transcript;
+  if (!userText) {
+    return res.status(400).json({ error: 'Missing prompt or transcript' });
+  }
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders?.();
+
+  const geminiKey = process.env.GEMINI_API_KEY;
+  const groqKey = process.env.GROQ_API_KEY;
+
+  const systemInstruction = `You are J.A.R.V.I.S., a sophisticated AI assistant.
+Speak concisely with polite British wit (maximum 2 sentences).
+Directly answer the user's question without preamble or filler.`;
+
+  // 1. Try Gemini 2.0 Flash Streaming
+  if (geminiKey) {
+    try {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:streamGenerateContent?alt=sse&key=${geminiKey}`;
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [
+            {
+              role: 'user',
+              parts: [{ text: systemInstruction + '\n\nUser: ' + userText }]
+            }
+          ],
+          generationConfig: {
+            temperature: 0.3,
+            maxOutputTokens: 200
+          }
+        })
+      });
+
+      if (response.ok && response.body) {
+        const reader = response.body.getReader ? response.body.getReader() : null;
+        let fullText = '';
+
+        if (reader) {
+          const decoder = new TextDecoder();
+          let buffer = '';
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                const jsonStr = line.slice(6).trim();
+                if (jsonStr) {
+                  try {
+                    const parsed = JSON.parse(jsonStr);
+                    const chunk = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
+                    if (chunk) {
+                      fullText += chunk;
+                      res.write(`data: ${JSON.stringify({ type: 'token', token: chunk })}\n\n`);
+                    }
+                  } catch (e) {}
+                }
+              }
+            }
+          }
+        } else {
+          // Node fetch stream
+          for await (const chunk of response.body) {
+            const str = chunk.toString();
+            const lines = str.split('\n');
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                const jsonStr = line.slice(6).trim();
+                if (jsonStr) {
+                  try {
+                    const parsed = JSON.parse(jsonStr);
+                    const tokenChunk = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
+                    if (tokenChunk) {
+                      fullText += tokenChunk;
+                      res.write(`data: ${JSON.stringify({ type: 'token', token: tokenChunk })}\n\n`);
+                    }
+                  } catch (e) {}
+                }
+              }
+            }
+          }
+        }
+
+        res.write(`data: ${JSON.stringify({ type: 'done', fullText: fullText.trim() })}\n\n`);
+        return res.end();
+      }
+    } catch (err) {
+      console.warn('[Jarvis Stream] Gemini streaming error, trying Groq fallback:', err.message);
+    }
+  }
+
+  // 2. Groq LLaMA 3.3 Streaming Fallback
+  if (groqKey) {
+    try {
+      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${groqKey}`
+        },
+        body: JSON.stringify({
+          model: 'llama-3.3-70b-versatile',
+          stream: true,
+          messages: [
+            { role: 'system', content: systemInstruction },
+            { role: 'user', content: userText }
+          ],
+          max_tokens: 200,
+          temperature: 0.3
+        })
+      });
+
+      if (response.ok && response.body) {
+        let fullText = '';
+        for await (const chunk of response.body) {
+          const str = chunk.toString();
+          const lines = str.split('\n');
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const dataStr = line.slice(6).trim();
+              if (dataStr === '[DONE]') continue;
+              try {
+                const parsed = JSON.parse(dataStr);
+                const delta = parsed.choices?.[0]?.delta?.content;
+                if (delta) {
+                  fullText += delta;
+                  res.write(`data: ${JSON.stringify({ type: 'token', token: delta })}\n\n`);
+                }
+              } catch (e) {}
+            }
+          }
+        }
+        res.write(`data: ${JSON.stringify({ type: 'done', fullText: fullText.trim() })}\n\n`);
+        return res.end();
+      }
+    } catch (err) {
+      console.warn('[Jarvis Stream] Groq streaming error:', err.message);
+    }
+  }
+
+  // Fallback single message
+  const fallback = "I'm standing by, sir.";
+  res.write(`data: ${JSON.stringify({ type: 'token', token: fallback })}\n\n`);
+  res.write(`data: ${JSON.stringify({ type: 'done', fullText: fallback })}\n\n`);
+  res.end();
+});
+
+// ==========================================
+// Phase 2: Multimodal Camera Vision
+// Endpoint: POST /jarvis/vision
+// Analyzes base64 JPEG from Camera2 via Gemini 2.0 Flash
+// ==========================================
+app.post('/jarvis/vision', async (req, res) => {
+  const startTime = Date.now();
+  const token = req.headers['x-jarvis-token'];
+  const expectedToken = process.env.JARVIS_APP_TOKEN || 'jarvis-jam-secret-2026';
+  if (token && token !== expectedToken) {
+    return res.status(401).json({ error: 'Invalid auth token' });
+  }
+
+  const { imageBase64, prompt } = req.body || {};
+  if (!imageBase64) {
+    return res.status(400).json({ error: 'Missing imageBase64' });
+  }
+
+  const geminiKey = process.env.GEMINI_API_KEY;
+  if (!geminiKey) {
+    return res.json({
+      spokenReply: "Vision processing requires a Gemini API key on the server, sir.",
+      description: "Server missing GEMINI_API_KEY",
+      latencyMs: Date.now() - startTime
+    });
+  }
+
+  const queryPrompt = prompt && prompt.trim().length > 0
+    ? prompt
+    : "Describe what is directly in front of the camera concisely.";
+
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              {
+                text: `You are J.A.R.V.I.S., Tony Stark's sophisticated AI assistant.
+Inspect this image captured from the user's phone camera.
+Answer the user's inquiry concisely in 1-2 spoken sentences with calm, polite British poise.
+User prompt: "${queryPrompt}"`
+              },
+              {
+                inlineData: {
+                  mimeType: 'image/jpeg',
+                  data: imageBase64
+                }
+              }
+            ]
+          }
+        ],
+        generationConfig: {
+          temperature: 0.2,
+          maxOutputTokens: 150
+        }
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Gemini vision HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+    const spokenReply = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim()
+      || "I see the image, but could not discern the details, sir.";
+
+    return res.json({
+      spokenReply,
+      description: spokenReply,
+      latencyMs: Date.now() - startTime
+    });
+  } catch (err) {
+    console.error('[Jarvis Vision] Error:', err.message);
+    return res.json({
+      spokenReply: "I had difficulty analyzing that visual feed, sir.",
+      description: err.message,
+      latencyMs: Date.now() - startTime
+    });
+  }
+});
+
+// ==========================================
+// Phase 2: Screen Understanding & Q&A
+// Endpoint: POST /jarvis/screen-qa
+// Analyzes accessibility hierarchy & foreground app
+// ==========================================
+app.post('/jarvis/screen-qa', async (req, res) => {
+  const startTime = Date.now();
+  const token = req.headers['x-jarvis-token'];
+  const expectedToken = process.env.JARVIS_APP_TOKEN || 'jarvis-jam-secret-2026';
+  if (token && token !== expectedToken) {
+    return res.status(401).json({ error: 'Invalid auth token' });
+  }
+
+  const { screenContent, appName, packageName, query } = req.body || {};
+
+  // Compact screen elements: filter empty and take top texts
+  const elements = Array.isArray(screenContent)
+    ? screenContent
+        .map(el => (el.text || el.desc || '').trim())
+        .filter(t => t.length > 0)
+        .slice(0, 35)
+    : [];
+
+  const summary = elements.join(' | ');
+  const userQuery = query || "Summarize what is on my screen.";
+
+  const promptText = `Active Application: ${appName || packageName || 'Current Screen'}
+Visible Screen Text & Elements:
+${summary || 'No text elements detected.'}
+
+User Question: "${userQuery}"
+
+Provide a natural, polite 1-2 sentence spoken summary answering the user's question directly.`;
+
+  const geminiKey = process.env.GEMINI_API_KEY;
+  const groqKey = process.env.GROQ_API_KEY;
+
+  if (geminiKey) {
+    try {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`;
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [
+            {
+              role: 'user',
+              parts: [
+                {
+                  text: `You are J.A.R.V.I.S., a sophisticated AI assistant.
+${promptText}`
+                }
+              ]
+            }
+          ],
+          generationConfig: {
+            temperature: 0.2,
+            maxOutputTokens: 150
+          }
+        })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const reply = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+        if (reply) {
+          return res.json({
+            spokenReply: reply,
+            latencyMs: Date.now() - startTime
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('[Jarvis ScreenQA] Gemini error:', e.message);
+    }
+  }
+
+  if (groqKey) {
+    try {
+      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${groqKey}`
+        },
+        body: JSON.stringify({
+          model: 'llama-3.3-70b-versatile',
+          messages: [
+            { role: 'system', content: 'You are J.A.R.V.I.S. Provide a 1-2 sentence concise spoken answer.' },
+            { role: 'user', content: promptText }
+          ],
+          max_tokens: 150,
+          temperature: 0.2
+        })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const reply = data.choices?.[0]?.message?.content?.trim();
+        if (reply) {
+          return res.json({
+            spokenReply: reply,
+            latencyMs: Date.now() - startTime
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('[Jarvis ScreenQA] Groq error:', e.message);
+    }
+  }
+
+  // Fallback if no LLM configured
+  const topText = elements.slice(0, 3).join(', ');
+  const fallback = topText
+    ? `You are in ${appName || 'an app'}, viewing ${topText}, sir.`
+    : `You are currently viewing ${appName || 'your screen'}, sir.`;
+
+  return res.json({
+    spokenReply: fallback,
+    latencyMs: Date.now() - startTime
+  });
+});
+
 /**
  * Room Data Structure:
  * {

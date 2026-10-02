@@ -291,11 +291,23 @@ class JarvisTtsHelper(private val context: Context) : TextToSpeech.OnInitListene
         }
     }
 
+    private val pendingUtterances = java.util.concurrent.ConcurrentHashMap<String, (() -> Unit)?>()
+    private val activeUtteranceCount = java.util.concurrent.atomic.AtomicInteger(0)
+
     /**
      * Speak text aloud using the device TTS engine.
      * Respects voiceRepliesEnabled and beepOnly settings.
      */
     fun speak(text: String, onDone: (() -> Unit)? = null) {
+        speakChunk(text, queueAdd = false, onDone = onDone)
+    }
+
+    /**
+     * Speak a stream chunk aloud.
+     * If queueAdd is true, appends to the current speech queue without dropping audio focus.
+     * If queueAdd is false, flushes any ongoing speech and starts fresh.
+     */
+    fun speakChunk(text: String, queueAdd: Boolean, onDone: (() -> Unit)? = null) {
         val trimmed = text.trim()
         if (trimmed.isBlank()) {
             onDone?.invoke()
@@ -340,6 +352,17 @@ class JarvisTtsHelper(private val context: Context) : TextToSpeech.OnInitListene
 
         val utteranceId = UUID.randomUUID().toString()
 
+        if (!queueAdd) {
+            try {
+                engine.stop()
+            } catch (e: Exception) {}
+            pendingUtterances.clear()
+            activeUtteranceCount.set(0)
+        }
+
+        activeUtteranceCount.incrementAndGet()
+        pendingUtterances[utteranceId] = onDone
+
         engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(id: String?) {
                 isSpeaking = true
@@ -347,36 +370,44 @@ class JarvisTtsHelper(private val context: Context) : TextToSpeech.OnInitListene
             }
 
             override fun onDone(id: String?) {
-                if (id == utteranceId) {
+                val cb = id?.let { pendingUtterances.remove(it) }
+                cb?.invoke()
+                val remaining = activeUtteranceCount.decrementAndGet()
+                if (remaining <= 0) {
+                    activeUtteranceCount.set(0)
                     isSpeaking = false
                     abandonTransientFocus()
-                    onDone?.invoke()
-                    onSpeechDoneCallback?.invoke(utteranceId)
+                    onSpeechDoneCallback?.invoke(id ?: "")
                 }
             }
 
             override fun onError(id: String?) {
-                if (id == utteranceId) {
+                val cb = id?.let { pendingUtterances.remove(it) }
+                cb?.invoke()
+                val remaining = activeUtteranceCount.decrementAndGet()
+                if (remaining <= 0) {
+                    activeUtteranceCount.set(0)
                     isSpeaking = false
                     abandonTransientFocus()
-                    onDone?.invoke()
-                    onSpeechDoneCallback?.invoke(utteranceId)
+                    onSpeechDoneCallback?.invoke(id ?: "")
                 }
             }
         })
+
+        val queueMode = if (queueAdd) TextToSpeech.QUEUE_ADD else TextToSpeech.QUEUE_FLUSH
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             val params = Bundle().apply {
                 putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1.0f)
             }
-            engine.speak(trimmed, TextToSpeech.QUEUE_FLUSH, params, utteranceId)
+            engine.speak(trimmed, queueMode, params, utteranceId)
         } else {
             @Suppress("DEPRECATION")
             val params = HashMap<String, String>().apply {
                 put(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, utteranceId)
             }
             @Suppress("DEPRECATION")
-            engine.speak(trimmed, TextToSpeech.QUEUE_FLUSH, params)
+            engine.speak(trimmed, queueMode, params)
         }
     }
 
@@ -385,6 +416,8 @@ class JarvisTtsHelper(private val context: Context) : TextToSpeech.OnInitListene
      */
     fun stop() {
         try {
+            pendingUtterances.clear()
+            activeUtteranceCount.set(0)
             tts?.stop()
         } catch (e: Exception) {
             Log.w(TAG, "Error stopping TTS", e)

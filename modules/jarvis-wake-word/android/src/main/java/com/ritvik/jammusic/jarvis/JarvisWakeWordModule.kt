@@ -335,6 +335,18 @@ class JarvisWakeWordModule : Module() {
             }
         }
 
+        // Speak streaming chunk using on-device TextToSpeech with QUEUE_ADD support
+        AsyncFunction("speakChunk") { text: String, queueAdd: Boolean ->
+            val service = JarvisListenerService.instance
+            if (service != null) {
+                service.speakChunk(text, queueAdd)
+            } else {
+                val context = appContext.reactContext ?: return@AsyncFunction
+                val helper = JarvisTtsHelper(context)
+                helper.speakChunk(text, queueAdd)
+            }
+        }
+
         // Stop active speech synthesis
         Function("stopSpeaking") {
             JarvisListenerService.instance?.stopSpeaking()
@@ -597,6 +609,15 @@ class JarvisWakeWordModule : Module() {
                 "success" to result.success,
                 "spokenReply" to result.spokenReply
             )
+        }
+
+        // ==========================================
+        // Multimodal Camera Vision Bridge
+        // ==========================================
+
+        AsyncFunction("takeCameraSnapshot") {
+            val context = appContext.reactContext ?: return@AsyncFunction null
+            com.ritvik.jammusic.jarvis.handlers.VisionHandler.takeSnapshot(context)
         }
     }
 }

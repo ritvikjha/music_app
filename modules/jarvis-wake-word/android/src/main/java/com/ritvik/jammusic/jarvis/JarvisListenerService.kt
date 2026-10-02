@@ -1527,13 +1527,17 @@ class JarvisListenerService : Service() {
     }
 
     fun speak(text: String, onDone: (() -> Unit)? = null) {
+        speakChunk(text, queueAdd = false, onDone = onDone)
+    }
+
+    fun speakChunk(text: String, queueAdd: Boolean, onDone: (() -> Unit)? = null) {
         val state = currentState.get()
         if (state == JarvisState.CAPTURING) {
             Log.w(TAG, "Speak rejected: microphone capture is actively recording ($state)")
             onDone?.invoke()
             return
         }
-        ttsHelper?.speak(text, onDone)
+        ttsHelper?.speakChunk(text, queueAdd, onDone)
     }
 
     fun stopSpeaking() {

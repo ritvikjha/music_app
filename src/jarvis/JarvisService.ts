@@ -30,6 +30,7 @@ import { getMusicProfile } from './memory/musicProfile';
 import { appendConversationTurn } from './memory/conversationHistory';
 import { getTimeOfDay } from './tools/timeDateTool';
 import { proactiveEngine } from './ambient/proactiveEngine';
+import { streamLlmReply } from './brain/streamingBrain';
 import type { Song } from '../types';
 import type {
   JarvisState,
@@ -183,6 +184,36 @@ export async function speak(text: string): Promise<void> {
       console.warn('[Jarvis] speak error:', e);
     }
   }
+}
+
+/**
+ * Speak a streaming chunk using native Android TTS queue.
+ */
+export async function speakChunk(text: string, queueAdd = false): Promise<void> {
+  const mod = getModule();
+  if (mod?.speakChunk) {
+    try {
+      await mod.speakChunk(text, queueAdd);
+    } catch (e) {
+      console.warn('[Jarvis] speakChunk error:', e);
+    }
+  }
+}
+
+/**
+ * Capture a silent, high-speed camera snapshot for multimodal vision.
+ */
+export async function takeCameraSnapshot(): Promise<string | null> {
+  const mod = getModule();
+  if (mod?.takeCameraSnapshot) {
+    try {
+      return await mod.takeCameraSnapshot();
+    } catch (e) {
+      console.warn('[Jarvis] takeCameraSnapshot error:', e);
+      return null;
+    }
+  }
+  return null;
 }
 
 /**
@@ -411,6 +442,28 @@ export async function startJarvis(callbacks: JarvisCallbacks = {}): Promise<bool
         const totalPipelineMs = lastWakeTime
           ? actionTime - lastWakeTime
           : transcriptToIntentMs + intentToActionMs;
+
+        // Phase 1: Real-time Zero-Latency Streaming Intelligence (< 350ms to first spoken syllable)
+        // If query is an open conversational/chat question, stream token-by-token directly to TTS queue
+        if (
+          intentResult.intent === 'CHAT' &&
+          (!actionResult.spokenReply ||
+            actionResult.spokenReply === 'Let me check that for you.' ||
+            actionResult.spokenReply === "I'm listening.")
+        ) {
+          console.log(`[Jarvis Stream] ⚡ Real-Time Streaming triggered for: "${event.text}"`);
+          const streamedReply = await streamLlmReply(event.text, {
+            autoSpeak: true,
+            onToken: (_tok, full) => {
+              registeredCallbacks.onTranscript?.(full, false);
+            },
+          });
+          actionResult.spokenReply = streamedReply;
+          appendConversationTurn({ role: 'user', text: event.text }).catch(() => {});
+          appendConversationTurn({ role: 'assistant', text: streamedReply }).catch(() => {});
+          registeredCallbacks.onActionResult?.(actionResult);
+          return;
+        }
 
         console.log(`[Jarvis Pipeline] ⏱️ 3/3 Intent -> Action: ${intentToActionMs}ms (ok: ${actionResult.ok})`);
         console.log(`[Jarvis Pipeline] 🚀 TOTAL PIPELINE LATENCY: ${totalPipelineMs}ms (wake -> action)`);

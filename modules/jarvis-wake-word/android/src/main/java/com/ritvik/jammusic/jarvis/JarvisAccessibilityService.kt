@@ -248,7 +248,7 @@ class JarvisAccessibilityService : AccessibilityService() {
             val svc = instance ?: return emptyList()
             val root = svc.rootInActiveWindow ?: return emptyList()
             val list = mutableListOf<Map<String, Any>>()
-            svc.collectInteractiveNodes(root, list, maxItems = 30)
+            svc.collectInteractiveNodes(root, list, maxItems = 60)
             return list
         }
     }
