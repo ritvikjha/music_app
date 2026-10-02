@@ -35,9 +35,16 @@ class WakeWordEngine(
     private val audioRecorder = AudioRecorder(context)
     private val modelProcessors = mutableMapOf<WakeWordModel, ModelProcessor>()
     private val detectionCooldowns = mutableMapOf<String, Long>()
+    private val consecutiveHits = mutableMapOf<String, Int>()
 
     private val _detections = MutableSharedFlow<WakeWordDetection>()
     private val _scores = MutableSharedFlow<WakeWordScore>()
+
+    // Rolling audio history for on-device Voice ID speaker verification
+    // 25 chunks * 1280 samples = 32,000 samples = 2.0 seconds at 16kHz
+    private val audioHistoryLock = Any()
+    private val recentAudioFrames = ArrayDeque<FloatArray>()
+    private val maxHistoryChunks = 25
 
     val detections: Flow<WakeWordDetection> = _detections.asSharedFlow()
     val scores: Flow<WakeWordScore> = _scores.asSharedFlow()
@@ -49,6 +56,23 @@ class WakeWordEngine(
         get() = recordingJob?.isActive == true
 
     private var recordingJob: Job? = null
+
+    /**
+     * Retrieves a copy of the last ~2.0 seconds of 16kHz audio captured right up to the wake moment.
+     */
+    fun getRecentAudioSnapshot(): FloatArray {
+        synchronized(audioHistoryLock) {
+            val totalSize = recentAudioFrames.sumOf { it.size }
+            if (totalSize == 0) return FloatArray(0)
+            val result = FloatArray(totalSize)
+            var offset = 0
+            for (chunk in recentAudioFrames) {
+                System.arraycopy(chunk, 0, result, offset, chunk.size)
+                offset += chunk.size
+            }
+            return result
+        }
+    }
 
     init {
         require(models.isNotEmpty()) { "At least one wake word model must be provided" }
@@ -73,6 +97,13 @@ class WakeWordEngine(
                 try {
                     audioRecorder.startRecording()
                         .collect { audioBuffer ->
+                            synchronized(audioHistoryLock) {
+                                recentAudioFrames.addLast(audioBuffer.clone())
+                                if (recentAudioFrames.size > maxHistoryChunks) {
+                                    recentAudioFrames.removeFirst()
+                                }
+                            }
+
                             val detectionResults = models.mapIndexed { index, model ->
                                 async {
                                     try {
@@ -83,14 +114,23 @@ class WakeWordEngine(
                                         _scores.emit(WakeWordScore(model, score))
 
                                         if (score > model.threshold) {
-                                            Log.d(TAG, "DETECTION! ${model.name} - Score: ${String.format("%.5f", score)} > Threshold: ${String.format("%.5f", model.threshold)}")
-                                            DetectionResult(
-                                                model = model,
-                                                score = score,
-                                                difference = score - model.threshold,
-                                                index = index
-                                            )
+                                            val hits = (consecutiveHits[model.name] ?: 0) + 1
+                                            consecutiveHits[model.name] = hits
+                                            if (hits >= 2) {
+                                                Log.d(TAG, "CONFIRMED DETECTION (sustained 2 frames)! ${model.name} - Score: ${String.format("%.5f", score)} > Threshold: ${String.format("%.5f", model.threshold)}")
+                                                consecutiveHits[model.name] = 0
+                                                DetectionResult(
+                                                    model = model,
+                                                    score = score,
+                                                    difference = score - model.threshold,
+                                                    index = index
+                                                )
+                                            } else {
+                                                Log.d(TAG, "Frame 1 above threshold ($score) for ${model.name}. Awaiting frame 2 confirmation...")
+                                                null
+                                            }
                                         } else {
+                                            consecutiveHits[model.name] = 0
                                             null
                                         }
                                     } catch (e: Exception) {

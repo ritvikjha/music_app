@@ -10,7 +10,7 @@ import java.nio.FloatBuffer
  * Handles mel-spectrogram computation using ONNX model.
  * Vendored from Re-MENTIA/openwakeword-android-kt (Apache 2.0 License).
  */
-internal class MelSpectrogram(
+class MelSpectrogram(
     private val assetManager: AssetManager
 ) : AutoCloseable {
 

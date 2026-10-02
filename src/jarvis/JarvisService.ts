@@ -970,4 +970,75 @@ export function inspectScreen(): Array<{
   return mod?.inspectScreen ? mod.inspectScreen() : [];
 }
 
+// ==========================================
+// Sensitivity Presets (Far-field distance tuning)
+// ==========================================
+
+export type SensitivityPreset = 'low' | 'normal' | 'strict' | 'max';
+
+export function setSensitivityPreset(preset: SensitivityPreset): void {
+  const mod = getModule();
+  mod?.setSensitivityPreset?.(preset);
+}
+
+export function getSensitivityPreset(): string {
+  const mod = getModule();
+  return mod?.getSensitivityPreset ? mod.getSensitivityPreset() : 'normal';
+}
+
+// ==========================================
+// Voice ID / Speaker Verification
+// ==========================================
+
+export function isVoiceIdEnrolled(): boolean {
+  const mod = getModule();
+  return mod?.isVoiceIdEnrolled ? mod.isVoiceIdEnrolled() : false;
+}
+
+export function getVoiceIdThreshold(): number {
+  const mod = getModule();
+  return mod?.getVoiceIdThreshold ? mod.getVoiceIdThreshold() : 0.68;
+}
+
+export function setVoiceIdThreshold(threshold: number): void {
+  const mod = getModule();
+  mod?.setVoiceIdThreshold?.(threshold);
+}
+
+export function isVoiceIdRequired(): boolean {
+  const mod = getModule();
+  return mod?.isVoiceIdRequired ? mod.isVoiceIdRequired() : false;
+}
+
+export function setVoiceIdRequired(required: boolean): void {
+  const mod = getModule();
+  mod?.setVoiceIdRequired?.(required);
+}
+
+export function clearVoiceId(): boolean {
+  const mod = getModule();
+  return mod?.clearVoiceId ? mod.clearVoiceId() : false;
+}
+
+export function startVoiceIdEnrollment(): boolean {
+  const mod = getModule();
+  return mod?.startVoiceIdEnrollment ? mod.startVoiceIdEnrollment() : false;
+}
+
+export async function captureVoiceIdSample(durationMs: number = 2500): Promise<{
+  success: boolean;
+  sampleIndex?: number;
+  totalRequired?: number;
+  isComplete?: boolean;
+  message?: string;
+  error?: string;
+}> {
+  const mod = getModule();
+  if (!mod?.captureVoiceIdSample) {
+    return { success: false, error: 'Voice ID module not available on this platform' };
+  }
+  return await mod.captureVoiceIdSample(durationMs);
+}
+
+
 

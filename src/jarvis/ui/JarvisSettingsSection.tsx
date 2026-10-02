@@ -46,8 +46,18 @@ import {
   startAutoScroll,
   stopAutomation,
   isAutomationRunning,
+  setSensitivityPreset,
+  getSensitivityPreset,
+  type SensitivityPreset,
+  isVoiceIdEnrolled,
+  getVoiceIdThreshold,
+  setVoiceIdThreshold,
+  isVoiceIdRequired,
+  setVoiceIdRequired,
+  clearVoiceId,
 } from '../JarvisService';
 import { JarvisPrivacyModal } from './JarvisPrivacyModal';
+import { JarvisVoiceIdModal } from './JarvisVoiceIdModal';
 
 
 interface JarvisSettingsSectionProps {
@@ -60,6 +70,11 @@ export const JarvisSettingsSection: React.FC<JarvisSettingsSectionProps> = ({
   showToast,
 }) => {
   const [sensitivity, setSensitivityState] = useState(0.5);
+  const [sensitivityPreset, setSensitivityPresetState] = useState<SensitivityPreset>('normal');
+  const [voiceIdEnrolled, setVoiceIdEnrolled] = useState(false);
+  const [voiceIdRequired, setVoiceIdRequiredState] = useState(false);
+  const [voiceIdThreshold, setVoiceIdThresholdState] = useState(0.68);
+  const [showVoiceIdModal, setShowVoiceIdModal] = useState(false);
   const [voiceReplies, setVoiceReplies] = useState(true);
   const [beepOnly, setBeepOnlyMode] = useState(false);
   const [language, setLanguage] = useState('en-IN');
@@ -89,6 +104,18 @@ export const JarvisSettingsSection: React.FC<JarvisSettingsSectionProps> = ({
       try {
         const sens = await getWakeSensitivity();
         setSensitivityState(sens);
+
+        const preset = getSensitivityPreset() as SensitivityPreset;
+        setSensitivityPresetState(preset || 'normal');
+
+        const enrolled = isVoiceIdEnrolled();
+        setVoiceIdEnrolled(enrolled);
+
+        const required = isVoiceIdRequired();
+        setVoiceIdRequiredState(required);
+
+        const vThreshold = getVoiceIdThreshold();
+        setVoiceIdThresholdState(vThreshold);
 
         const vr = await isVoiceRepliesEnabled();
         setVoiceReplies(vr);
@@ -159,9 +186,65 @@ export const JarvisSettingsSection: React.FC<JarvisSettingsSectionProps> = ({
 
 
   const handleSensitivityChange = async (newVal: number) => {
-    const clamped = Math.round(Math.max(0.2, Math.min(0.85, newVal)) * 100) / 100;
+    const clamped = Math.round(Math.max(0.25, Math.min(0.85, newVal)) * 100) / 100;
     setSensitivityState(clamped);
     await setWakeSensitivity(clamped);
+    if (clamped <= 0.32) setSensitivityPresetState('max');
+    else if (clamped <= 0.45) setSensitivityPresetState('low');
+    else if (clamped <= 0.58) setSensitivityPresetState('normal');
+    else setSensitivityPresetState('strict');
+  };
+
+  const handleSelectSensitivityPreset = (preset: SensitivityPreset, val: number) => {
+    setSensitivityPresetState(preset);
+    setSensitivityState(val);
+    setSensitivityPreset(preset);
+    setWakeSensitivity(val);
+    showToast(`Sensitivity set to ${preset.toUpperCase()} (${(val * 100).toFixed(0)}%)`, 'info');
+  };
+
+  const handleToggleVoiceIdRequired = (val: boolean) => {
+    if (val && !voiceIdEnrolled) {
+      Alert.alert(
+        'Voice ID Enrollment Required',
+        'You must enroll your voice before enabling Voice ID protection for sensitive actions.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Enroll Voice', onPress: () => setShowVoiceIdModal(true) },
+        ]
+      );
+      return;
+    }
+    setVoiceIdRequiredState(val);
+    setVoiceIdRequired(val);
+    showToast(val ? 'Voice ID protection enabled for sensitive commands' : 'Voice ID protection disabled', 'info');
+  };
+
+  const handleClearVoiceId = () => {
+    Alert.alert(
+      'Clear Voice ID',
+      'Are you sure you want to delete your enrolled voiceprint? Sensitive actions (payments, WhatsApp, notifications) will no longer verify your voice.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Clear Voiceprint',
+          style: 'destructive',
+          onPress: () => {
+            clearVoiceId();
+            setVoiceIdEnrolled(false);
+            setVoiceIdRequiredState(false);
+            setVoiceIdRequired(false);
+            showToast('Voice ID deleted', 'info');
+          },
+        },
+      ]
+    );
+  };
+
+  const handleSetVoiceIdThreshold = (threshold: number) => {
+    setVoiceIdThresholdState(threshold);
+    setVoiceIdThreshold(threshold);
+    showToast(`Voice ID strictness set to ${(threshold * 100).toFixed(0)}%`, 'info');
   };
 
   const handleToggleVoiceReplies = async (val: boolean) => {
@@ -227,10 +310,10 @@ export const JarvisSettingsSection: React.FC<JarvisSettingsSectionProps> = ({
   };
 
   const getSensitivityLabel = (val: number) => {
-    if (val <= 0.35) return 'Sensitive (Easiest)';
-    if (val <= 0.55) return 'Balanced (Recommended)';
-    if (val <= 0.70) return 'Strict (Fewer false alarms)';
-    return 'Extreme';
+    if (val <= 0.32) return 'Max (Whisper / 4-6m)';
+    if (val <= 0.45) return 'Low (Distance / 2-4m)';
+    if (val <= 0.58) return 'Normal (Balanced / 1-2m)';
+    return 'Strict (Noisy / TV)';
   };
 
   return (
@@ -258,21 +341,24 @@ export const JarvisSettingsSection: React.FC<JarvisSettingsSectionProps> = ({
 
           <View style={styles.presetsRow}>
             {[
-              { label: 'Low', val: 0.35 },
-              { label: 'Normal', val: 0.5 },
-              { label: 'Strict', val: 0.65 },
-              { label: 'Max', val: 0.8 },
+              { label: 'Low', preset: 'low', val: 0.40, desc: 'Quiet Room (2-4m)' },
+              { label: 'Normal', preset: 'normal', val: 0.50, desc: 'Balanced (1-2m)' },
+              { label: 'Strict', preset: 'strict', val: 0.65, desc: 'Noisy / TV' },
+              { label: 'Max', preset: 'max', val: 0.30, desc: 'Whisper / 4-6m' },
             ].map((p) => {
-              const active = Math.abs(sensitivity - p.val) < 0.05;
+              const active = Math.abs(sensitivity - p.val) < 0.04 || sensitivityPreset === p.preset;
               return (
                 <TouchableOpacity
                   key={p.label}
                   style={[styles.presetPill, active && styles.presetPillActive]}
-                  onPress={() => handleSensitivityChange(p.val)}
+                  onPress={() => handleSelectSensitivityPreset(p.preset as SensitivityPreset, p.val)}
                   activeOpacity={0.7}
                 >
                   <Text style={[styles.presetPillText, active && styles.presetPillTextActive]}>
                     {p.label}
+                  </Text>
+                  <Text style={[styles.presetPillSubtext, active && styles.presetPillSubtextActive]}>
+                    {(p.val * 100).toFixed(0)}%
                   </Text>
                 </TouchableOpacity>
               );
@@ -286,6 +372,14 @@ export const JarvisSettingsSection: React.FC<JarvisSettingsSectionProps> = ({
           >
             <Ionicons name="add" size={18} color={colors.textPrimary} />
           </TouchableOpacity>
+        </View>
+
+        {/* Far-field AGC & 2-Frame Confirmation Helper */}
+        <View style={styles.sensitivityHelperCard}>
+          <Ionicons name="hardware-chip-outline" size={13} color="#10B981" />
+          <Text style={styles.sensitivityHelperText}>
+            Far-field audio uses hardware Automatic Gain Control (AGC) & 2-frame confirmation to capture distant speech across the room without false alarms.
+          </Text>
         </View>
       </View>
 
@@ -476,6 +570,111 @@ export const JarvisSettingsSection: React.FC<JarvisSettingsSectionProps> = ({
         </View>
       </View>
 
+      {/* Voice ID & Speaker Verification Section */}
+      <View style={styles.settingBlock}>
+        <View style={styles.blockHeader}>
+          <View style={styles.blockHeaderLeft}>
+            <Ionicons name="finger-print-outline" size={18} color="#6366F1" />
+            <Text style={styles.blockTitle}>Voice ID (Speaker Verification)</Text>
+          </View>
+          <View style={[styles.statusBadge, voiceIdEnrolled ? styles.statusBadgeActive : styles.statusBadgeInactive]}>
+            <Ionicons
+              name={voiceIdEnrolled ? 'shield-checkmark' : 'shield-outline'}
+              size={12}
+              color={voiceIdEnrolled ? '#10B981' : '#F59E0B'}
+            />
+            <Text style={[styles.statusBadgeText, { color: voiceIdEnrolled ? '#10B981' : '#F59E0B' }]}>
+              {voiceIdEnrolled ? 'Enrolled' : 'Not Enrolled'}
+            </Text>
+          </View>
+        </View>
+
+        <Text style={styles.voiceIdDesc}>
+          On-device speaker verification gates sensitive actions (payments, WhatsApp sending, reading notifications, deletions, and UI automation) so only your voice can trigger them.
+        </Text>
+
+        {/* Require Voice ID Toggle */}
+        <View style={[styles.settingRow, { paddingHorizontal: 0, paddingVertical: spacing.sm }]}>
+          <View style={styles.settingRowLeft}>
+            <Ionicons
+              name="lock-closed-outline"
+              size={17}
+              color={voiceIdRequired ? '#6366F1' : colors.textSecondary}
+            />
+            <View>
+              <Text style={styles.rowTitle}>Require Voice ID for Sensitive Actions</Text>
+              <Text style={styles.rowSubtitle}>
+                {voiceIdRequired
+                  ? 'Active: Voice match required for private commands'
+                  : 'Disabled: Any speaker can trigger all commands'}
+              </Text>
+            </View>
+          </View>
+          <Switch
+            value={voiceIdRequired}
+            onValueChange={handleToggleVoiceIdRequired}
+            trackColor={{ false: '#3E3E3E', true: '#6366F1' }}
+            thumbColor="#FFFFFF"
+          />
+        </View>
+
+        {/* Strictness Threshold Selector */}
+        {voiceIdEnrolled && (
+          <View style={styles.strictnessContainer}>
+            <Text style={styles.strictnessLabel}>Verification Strictness (Cosine Similarity):</Text>
+            <View style={styles.presetsRow}>
+              {[
+                { label: 'Lenient', val: 0.60, tip: 'Easier match' },
+                { label: 'Balanced', val: 0.68, tip: 'Default (0.68)' },
+                { label: 'Strict', val: 0.75, tip: 'High security' },
+              ].map((item) => {
+                const active = Math.abs(voiceIdThreshold - item.val) < 0.03;
+                return (
+                  <TouchableOpacity
+                    key={item.label}
+                    style={[styles.presetPill, active && styles.presetPillActive]}
+                    onPress={() => handleSetVoiceIdThreshold(item.val)}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.presetPillText, active && styles.presetPillTextActive]}>
+                      {item.label}
+                    </Text>
+                    <Text style={[styles.presetPillSubtext, active && styles.presetPillSubtextActive]}>
+                      {(item.val * 100).toFixed(0)}%
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+        )}
+
+        {/* Enrollment Action Buttons */}
+        <View style={styles.voiceIdActionsRow}>
+          <TouchableOpacity
+            style={styles.enrollVoiceBtn}
+            onPress={() => setShowVoiceIdModal(true)}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="mic-outline" size={16} color="#FFFFFF" />
+            <Text style={styles.enrollVoiceBtnText}>
+              {voiceIdEnrolled ? 'Re-enroll Voice' : 'Enroll My Voice (3-step)'}
+            </Text>
+          </TouchableOpacity>
+
+          {voiceIdEnrolled && (
+            <TouchableOpacity
+              style={styles.clearVoiceBtn}
+              onPress={handleClearVoiceId}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="trash-outline" size={16} color="#EF4444" />
+              <Text style={styles.clearVoiceBtnText}>Clear</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      </View>
+
       {/* 5. Only Listen While Charging Option */}
       <View style={styles.settingRow}>
         <View style={styles.settingRowLeft}>
@@ -624,6 +823,18 @@ export const JarvisSettingsSection: React.FC<JarvisSettingsSectionProps> = ({
       <JarvisPrivacyModal
         visible={showPrivacyModal}
         onClose={() => setShowPrivacyModal(false)}
+      />
+
+      {/* Voice ID Enrollment Modal */}
+      <JarvisVoiceIdModal
+        visible={showVoiceIdModal}
+        onClose={() => setShowVoiceIdModal(false)}
+        onEnrolledSuccess={() => {
+          setVoiceIdEnrolled(true);
+          setVoiceIdRequiredState(true);
+          setVoiceIdRequired(true);
+          showToast('Voice ID enrolled! Sensitive actions are now protected.', 'success');
+        }}
       />
     </View>
   );
@@ -968,4 +1179,85 @@ const styles = StyleSheet.create({
     color: colors.accent,
     fontWeight: '700',
   },
+  presetPillSubtext: {
+    fontSize: 9,
+    color: colors.textSecondary,
+    marginTop: 1,
+  },
+  presetPillSubtextActive: {
+    color: colors.accent,
+    fontWeight: '700',
+  },
+  sensitivityHelperCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(16, 185, 129, 0.08)',
+    borderRadius: borderRadius.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    marginTop: spacing.sm,
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.2)',
+  },
+  sensitivityHelperText: {
+    fontSize: 11,
+    color: '#A7F3D0',
+    flex: 1,
+    lineHeight: 15,
+  },
+  voiceIdDesc: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    lineHeight: 16,
+    marginBottom: spacing.xs,
+  },
+  strictnessContainer: {
+    marginTop: spacing.xs,
+    marginBottom: spacing.sm,
+  },
+  strictnessLabel: {
+    fontSize: 11,
+    color: colors.textSecondary,
+    marginBottom: 6,
+    fontWeight: '500',
+  },
+  voiceIdActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginTop: spacing.xs,
+  },
+  enrollVoiceBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    backgroundColor: '#6366F1',
+    borderRadius: borderRadius.sm,
+  },
+  enrollVoiceBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  clearVoiceBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    backgroundColor: 'rgba(239, 68, 68, 0.12)',
+    borderRadius: borderRadius.sm,
+    borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.25)',
+  },
+  clearVoiceBtnText: {
+    color: '#EF4444',
+    fontSize: 12,
+    fontWeight: '600',
+  },
 });
+

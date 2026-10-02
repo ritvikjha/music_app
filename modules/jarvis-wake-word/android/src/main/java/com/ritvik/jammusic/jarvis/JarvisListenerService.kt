@@ -35,6 +35,7 @@ import android.telephony.TelephonyCallback
 import android.telephony.TelephonyManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import com.ritvik.jammusic.jarvis.safety.SpeakerVerificationManager
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collectLatest
 import xyz.rementia.openwakeword.DetectionMode
@@ -79,7 +80,25 @@ class JarvisListenerService : Service() {
 
         /** Dynamic threshold for wake word detection (tunable from JS, default 0.5) */
         @Volatile
-        var wakeWordThreshold: Float = 0.5f
+        var wakeWordThreshold: Float = 0.50f
+
+        /** Active sensitivity preset: low (0.40), normal (0.50), strict (0.65), max (0.30) */
+        @Volatile
+        var sensitivityPreset: String = "normal"
+            private set
+
+        fun applySensitivityPreset(preset: String) {
+            sensitivityPreset = preset.lowercase()
+            wakeWordThreshold = when (sensitivityPreset) {
+                "max" -> 0.30f    // Whisper / Maximum room range (4-6m, high AGC reliance)
+                "low" -> 0.40f    // Quiet room / Distance (2-4m in bedroom/office)
+                "normal" -> 0.50f // Default balanced setting (1-2m typical ambient room)
+                "strict" -> 0.65f // Noisy environment (crowded, cafe, TV playing in background)
+                else -> 0.50f
+            }
+            Log.i(TAG, "Sensitivity preset updated to '$sensitivityPreset' (threshold=$wakeWordThreshold)")
+            instance?.restartWakeWordEngine()
+        }
 
         /** Active service instance reference */
         var instance: JarvisListenerService? = null
@@ -140,6 +159,10 @@ class JarvisListenerService : Service() {
     private var wakeDetectedTs: Long = 0L
     private var lastWakeModelName: String = ""
     private var hasRetriedCapture = false
+
+    // Snapshot of user audio at wake moment used for Voice ID speaker verification
+    @Volatile
+    private var lastWakeAudioSnapshot: FloatArray? = null
 
     private var noSpeechJob: Job? = null
     private var hardCapJob: Job? = null
@@ -815,12 +838,13 @@ class JarvisListenerService : Service() {
                                 Log.d(TAG, "Barge-in disabled: ignoring wake detection during TTS playback")
                                 return@collectLatest
                             }
-                            // Speaker echo guard: require deliberate high-confidence speech (>= 0.70f) to interrupt TTS
-                            if (detection.score < 0.70f) {
-                                Log.d(TAG, "Suppressed speaker echo detection (${detection.score} < 0.70) while TTS is speaking")
+                            // Speaker echo guard: require deliberate high-confidence speech (>= 0.78f) to interrupt TTS
+                            val echoSafeThreshold = 0.78f
+                            if (detection.score < echoSafeThreshold) {
+                                Log.d(TAG, "Suppressed speaker echo detection (${detection.score} < $echoSafeThreshold) while TTS is speaking")
                                 return@collectLatest
                             }
-                            Log.i(TAG, "⚡ High-confidence voice barge-in detected (${detection.score} >= 0.70) — interrupting TTS")
+                            Log.i(TAG, "⚡ High-confidence voice barge-in detected (${detection.score} >= $echoSafeThreshold) — interrupting TTS")
                             ttsHelper?.stop()
                         }
                         Log.i(TAG, "🎤 Wake word detected: '${detection.model.name}' with score ${detection.score}")
@@ -854,6 +878,23 @@ class JarvisListenerService : Service() {
         wakeWordEngine = null
     }
 
+    fun restartWakeWordEngine() {
+        if (currentState.get() == JarvisState.IDLE_LISTENING) {
+            stopWakeWordEngine()
+            startWakeWordEngine()
+        }
+    }
+
+    fun pauseListeningTemporarily() {
+        stopWakeWordEngine()
+    }
+
+    fun resumeListeningAfterPause() {
+        if (currentState.get() == JarvisState.IDLE_LISTENING) {
+            startWakeWordEngine()
+        }
+    }
+
     // ==========================================
     // Stage 2: Voice Command Capture & STT
     // ==========================================
@@ -884,7 +925,10 @@ class JarvisListenerService : Service() {
             logTimeline("AUDIO_FOCUS_REQUESTED", mapOf("mode" to "TRANSIENT_MAY_DUCK"))
         }
 
-        // 2. Immediately release wake-word AudioRecord so mic is completely free
+        // 2. Capture rolling 16kHz audio snapshot containing user's wake utterance for Voice ID verification
+        lastWakeAudioSnapshot = wakeWordEngine?.getRecentAudioSnapshot()
+
+        // 3. Immediately release wake-word AudioRecord so mic is completely free
         stopWakeWordEngine()
         logTimeline("AUDIO_RECORD_RELEASED")
 
@@ -1130,7 +1174,45 @@ class JarvisListenerService : Service() {
                     ))
 
                     if (text.isNotBlank()) {
+                        // PART 1 ITEM 3: Low-confidence STT handling at distance (< 0.35f)
+                        if (confidence != null && confidence in 0.01f..0.35f) {
+                            Log.w(TAG, "⚠️ Low STT confidence score ($confidence < 0.35) at distance — asking user to repeat")
+                            speak("Sorry, I didn't catch that clearly - can you repeat?")
+                            onCommandError?.invoke("low_confidence")
+                            finishCaptureAndReturnToIdle(isError = true)
+                            return
+                        }
+
                         serviceScope.launch {
+                            // PART 2: On-Device Voice ID Speaker Verification for Sensitive Actions
+                            val isActionSensitive = SpeakerVerificationManager.isSensitive("", text)
+                            if (isActionSensitive && SpeakerVerificationManager.isVoiceIdRequired(applicationContext)) {
+                                if (!SpeakerVerificationManager.isEnrolled(applicationContext)) {
+                                    Log.w(TAG, "🔒 Sensitive action blocked: Voice ID not enrolled")
+                                    speak("Voice ID enrollment required for this action. Please enroll your voice in Jarvis settings, sir.")
+                                    onCommandError?.invoke("voice_id_not_enrolled")
+                                    return@launch
+                                }
+
+                                val wakeAudio = lastWakeAudioSnapshot
+                                if (wakeAudio == null || wakeAudio.size < 1600) {
+                                    Log.w(TAG, "🔒 Sensitive action blocked: Insufficient audio for speaker verification")
+                                    speak("Couldn't verify your voice, please try again.")
+                                    onCommandError?.invoke("voice_id_insufficient_audio")
+                                    return@launch
+                                }
+
+                                val verification = SpeakerVerificationManager.verifySpeaker(applicationContext, wakeAudio)
+                                if (!verification.isVerified) {
+                                    Log.w(TAG, "🔒 Sensitive action blocked: Speaker verification mismatch (${verification.similarity} < ${verification.threshold})")
+                                    speak("Sorry, I don't recognize your voice for that, sir.")
+                                    onCommandError?.invoke("voice_id_mismatch")
+                                    return@launch
+                                }
+
+                                Log.i(TAG, "✅ [Voice ID] Speaker verified successfully (similarity=${verification.similarity} >= ${verification.threshold}). Executing sensitive action.")
+                            }
+
                             val nativeResult = CommandRegistry.executeIfMatched(applicationContext, text)
                             if (nativeResult != null) {
                                 Log.i(TAG, "⚡ Native command executed (<50ms): ${nativeResult.actionId}, reply='${nativeResult.spokenReply}'")

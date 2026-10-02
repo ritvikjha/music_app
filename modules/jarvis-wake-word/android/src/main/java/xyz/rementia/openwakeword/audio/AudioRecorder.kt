@@ -52,8 +52,10 @@ internal class AudioRecorder(
         var audioRecord: AudioRecord? = null
         var attempts = 0
         while (attempts < 5 && coroutineContext.isActive) {
+            // Priority 1: VOICE_RECOGNITION provides hardware-level far-field beamforming and speech pre-filtering
+            val audioSource = if (attempts < 3) MediaRecorder.AudioSource.VOICE_RECOGNITION else MediaRecorder.AudioSource.MIC
             val record = AudioRecord(
-                MediaRecorder.AudioSource.MIC,
+                audioSource,
                 SAMPLE_RATE,
                 CHANNEL_CONFIG,
                 AUDIO_FORMAT,
@@ -61,6 +63,7 @@ internal class AudioRecorder(
             )
             if (record.state == AudioRecord.STATE_INITIALIZED) {
                 audioRecord = record
+                android.util.Log.i("AudioRecorder", "AudioRecord initialized using source: $audioSource")
                 break
             }
             record.release()
@@ -75,16 +78,25 @@ internal class AudioRecorder(
 
         var aec: android.media.audiofx.AcousticEchoCanceler? = null
         var ns: android.media.audiofx.NoiseSuppressor? = null
+        var agc: android.media.audiofx.AutomaticGainControl? = null
         try {
             if (android.media.audiofx.AcousticEchoCanceler.isAvailable()) {
                 aec = android.media.audiofx.AcousticEchoCanceler.create(initializedRecord.audioSessionId)?.apply {
                     enabled = true
                 }
+                android.util.Log.i("AudioRecorder", "AcousticEchoCanceler (AEC) enabled")
             }
             if (android.media.audiofx.NoiseSuppressor.isAvailable()) {
                 ns = android.media.audiofx.NoiseSuppressor.create(initializedRecord.audioSessionId)?.apply {
                     enabled = true
                 }
+                android.util.Log.i("AudioRecorder", "NoiseSuppressor (NS) enabled")
+            }
+            if (android.media.audiofx.AutomaticGainControl.isAvailable()) {
+                agc = android.media.audiofx.AutomaticGainControl.create(initializedRecord.audioSessionId)?.apply {
+                    enabled = true
+                }
+                android.util.Log.i("AudioRecorder", "AutomaticGainControl (AGC) enabled for far-field distant pickup")
             }
         } catch (e: Exception) {
             android.util.Log.w("AudioRecorder", "Could not attach audiofx to session", e)
@@ -108,6 +120,7 @@ internal class AudioRecorder(
         } finally {
             try { aec?.release() } catch (e: Exception) {}
             try { ns?.release() } catch (e: Exception) {}
+            try { agc?.release() } catch (e: Exception) {}
             currentAudioSessionId = 0
             if (initializedRecord.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
                 initializedRecord.stop()

@@ -556,6 +556,102 @@ export function checkAndApplySmartDnd(): { success: boolean; spokenReply: string
   }
 }
 
+// ==========================================
+// Sensitivity Presets (Far-field distance tuning)
+// ==========================================
+
+export function setSensitivityPreset(preset: 'low' | 'normal' | 'strict' | 'max'): void {
+  try {
+    JarvisWakeWordNative.setSensitivityPreset?.(preset);
+  } catch {}
+}
+
+export function getSensitivityPreset(): string {
+  try {
+    return JarvisWakeWordNative.getSensitivityPreset?.() ?? 'normal';
+  } catch {
+    return 'normal';
+  }
+}
+
+// ==========================================
+// Voice ID / Speaker Verification
+// ==========================================
+
+export function isVoiceIdEnrolled(): boolean {
+  try {
+    return !!JarvisWakeWordNative.isVoiceIdEnrolled?.();
+  } catch {
+    return false;
+  }
+}
+
+export function getVoiceIdThreshold(): number {
+  try {
+    return JarvisWakeWordNative.getVoiceIdThreshold?.() ?? 0.68;
+  } catch {
+    return 0.68;
+  }
+}
+
+export function setVoiceIdThreshold(threshold: number): void {
+  try {
+    JarvisWakeWordNative.setVoiceIdThreshold?.(threshold);
+  } catch {}
+}
+
+export function isVoiceIdRequired(): boolean {
+  try {
+    return !!JarvisWakeWordNative.isVoiceIdRequired?.();
+  } catch {
+    return false;
+  }
+}
+
+export function setVoiceIdRequired(required: boolean): void {
+  try {
+    JarvisWakeWordNative.setVoiceIdRequired?.(required);
+  } catch {}
+}
+
+export function clearVoiceId(): boolean {
+  try {
+    return !!JarvisWakeWordNative.clearVoiceId?.();
+  } catch {
+    return false;
+  }
+}
+
+export function startVoiceIdEnrollment(): boolean {
+  try {
+    return !!JarvisWakeWordNative.startVoiceIdEnrollment?.();
+  } catch {
+    return false;
+  }
+}
+
+export async function captureVoiceIdSample(durationMs: number = 2500): Promise<{
+  success: boolean;
+  sampleIndex?: number;
+  totalRequired?: number;
+  isComplete?: boolean;
+  message?: string;
+  error?: string;
+}> {
+  try {
+    return await JarvisWakeWordNative.captureVoiceIdSample?.(durationMs) ?? {
+      success: false,
+      error: 'Module unavailable',
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      error: err?.message || 'Failed to capture sample',
+    };
+  }
+}
+
+
 export type {
   WakeWordDetection,
   JarvisState,

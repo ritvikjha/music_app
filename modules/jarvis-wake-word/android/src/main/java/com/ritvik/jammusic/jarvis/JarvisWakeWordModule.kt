@@ -8,6 +8,7 @@ import android.media.AudioManager
 import android.os.Build
 import android.util.Log
 import androidx.core.content.ContextCompat
+import com.ritvik.jammusic.jarvis.safety.SpeakerVerificationManager
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 
@@ -187,6 +188,67 @@ class JarvisWakeWordModule : Module() {
         // Get current wake sensitivity threshold
         Function("getWakeSensitivity") {
             JarvisListenerService.wakeWordThreshold.toDouble()
+        }
+
+        // Set sensitivity preset: "low", "normal", "strict", "max"
+        Function("setSensitivityPreset") { preset: String ->
+            JarvisListenerService.applySensitivityPreset(preset)
+        }
+
+        // Get sensitivity preset
+        Function("getSensitivityPreset") {
+            JarvisListenerService.sensitivityPreset
+        }
+
+        // ==========================================
+        // Voice ID & Speaker Verification Bridge
+        // ==========================================
+
+        Function("isVoiceIdEnrolled") {
+            val context = appContext.reactContext ?: return@Function false
+            SpeakerVerificationManager.isEnrolled(context)
+        }
+
+        Function("getVoiceIdThreshold") {
+            val context = appContext.reactContext ?: return@Function SpeakerVerificationManager.DEFAULT_SIMILARITY_THRESHOLD.toDouble()
+            SpeakerVerificationManager.getThreshold(context).toDouble()
+        }
+
+        Function("setVoiceIdThreshold") { threshold: Double ->
+            val context = appContext.reactContext ?: return@Function
+            SpeakerVerificationManager.setThreshold(context, threshold.toFloat())
+        }
+
+        Function("isVoiceIdRequired") {
+            val context = appContext.reactContext ?: return@Function false
+            SpeakerVerificationManager.isVoiceIdRequired(context)
+        }
+
+        Function("setVoiceIdRequired") { required: Boolean ->
+            val context = appContext.reactContext ?: return@Function
+            SpeakerVerificationManager.setVoiceIdRequired(context, required)
+        }
+
+        Function("clearVoiceId") {
+            val context = appContext.reactContext ?: return@Function false
+            SpeakerVerificationManager.clearVoiceprint(context)
+            true
+        }
+
+        Function("startVoiceIdEnrollment") {
+            SpeakerVerificationManager.startEnrollmentSession()
+            true
+        }
+
+        AsyncFunction("captureVoiceIdSample") { durationMs: Int ->
+            val context = appContext.reactContext ?: throw Exception("React context not available")
+            try {
+                JarvisListenerService.instance?.pauseListeningTemporarily()
+                val result = SpeakerVerificationManager.recordAndAddEnrollmentSample(context, durationMs.toLong().coerceAtLeast(1500L))
+                result
+            } finally {
+                JarvisListenerService.instance?.resumeListeningAfterPause()
+            }
         }
 
         // Check if the app is battery-optimized (returns true if restricted)

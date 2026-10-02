@@ -9,7 +9,7 @@ import android.content.res.AssetManager
  * Handles embedding generation from mel-spectrograms using ONNX model.
  * Vendored from Re-MENTIA/openwakeword-android-kt (Apache 2.0 License).
  */
-internal class EmbeddingModel(
+class EmbeddingModel(
     private val assetManager: AssetManager
 ) : AutoCloseable {
 
