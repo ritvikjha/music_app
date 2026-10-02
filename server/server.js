@@ -410,7 +410,7 @@ Directly answer the user's question without preamble or filler.`;
           'Authorization': `Bearer ${groqKey}`
         },
         body: JSON.stringify({
-          model: 'llama-3.3-70b-versatile',
+          model: 'openai/gpt-oss-20b',
           stream: true,
           messages: [
             { role: 'system', content: systemInstruction },
@@ -628,7 +628,7 @@ ${promptText}`
           'Authorization': `Bearer ${groqKey}`
         },
         body: JSON.stringify({
-          model: 'llama-3.3-70b-versatile',
+          model: 'openai/gpt-oss-20b',
           messages: [
             { role: 'system', content: 'You are J.A.R.V.I.S. Provide a 1-2 sentence concise spoken answer.' },
             { role: 'user', content: promptText }
