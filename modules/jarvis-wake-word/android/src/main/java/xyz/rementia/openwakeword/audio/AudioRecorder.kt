@@ -73,6 +73,23 @@ internal class AudioRecorder(
 
         currentAudioSessionId = initializedRecord.audioSessionId
 
+        var aec: android.media.audiofx.AcousticEchoCanceler? = null
+        var ns: android.media.audiofx.NoiseSuppressor? = null
+        try {
+            if (android.media.audiofx.AcousticEchoCanceler.isAvailable()) {
+                aec = android.media.audiofx.AcousticEchoCanceler.create(initializedRecord.audioSessionId)?.apply {
+                    enabled = true
+                }
+            }
+            if (android.media.audiofx.NoiseSuppressor.isAvailable()) {
+                ns = android.media.audiofx.NoiseSuppressor.create(initializedRecord.audioSessionId)?.apply {
+                    enabled = true
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("AudioRecorder", "Could not attach audiofx to session", e)
+        }
+
         val audioBuffer = ShortArray(BUFFER_SIZE_IN_SHORTS)
 
         try {
@@ -89,6 +106,8 @@ internal class AudioRecorder(
                 }
             }
         } finally {
+            try { aec?.release() } catch (e: Exception) {}
+            try { ns?.release() } catch (e: Exception) {}
             currentAudioSessionId = 0
             if (initializedRecord.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
                 initializedRecord.stop()

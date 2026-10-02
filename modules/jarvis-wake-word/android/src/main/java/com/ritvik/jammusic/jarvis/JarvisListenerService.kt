@@ -809,10 +809,19 @@ class JarvisListenerService : Service() {
             serviceScope.launch {
                 wakeWordEngine?.detections?.collectLatest { detection ->
                     if (currentState.get() == JarvisState.IDLE_LISTENING) {
-                        // Prevent acoustic self-triggering: if Jarvis TTS is speaking and allowBargeIn is false, ignore detection
-                        if (ttsHelper?.isSpeaking == true && !allowBargeIn) {
-                            Log.d(TAG, "Ignoring wake detection during active TTS speech to prevent speaker echo self-triggering")
-                            return@collectLatest
+                        // Prevent acoustic self-triggering: if Jarvis TTS is speaking out of phone speaker
+                        if (ttsHelper?.isSpeaking == true) {
+                            if (!allowBargeIn) {
+                                Log.d(TAG, "Barge-in disabled: ignoring wake detection during TTS playback")
+                                return@collectLatest
+                            }
+                            // Speaker echo guard: require deliberate high-confidence speech (>= 0.70f) to interrupt TTS
+                            if (detection.score < 0.70f) {
+                                Log.d(TAG, "Suppressed speaker echo detection (${detection.score} < 0.70) while TTS is speaking")
+                                return@collectLatest
+                            }
+                            Log.i(TAG, "⚡ High-confidence voice barge-in detected (${detection.score} >= 0.70) — interrupting TTS")
+                            ttsHelper?.stop()
                         }
                         Log.i(TAG, "🎤 Wake word detected: '${detection.model.name}' with score ${detection.score}")
                         handleWakeWordDetected(detection.model.name, detection.score)
@@ -940,17 +949,19 @@ class JarvisListenerService : Service() {
                 if (!useFallbackLang) {
                     val langTag = when (preferredLanguage) {
                         "hi-IN" -> "hi-IN"
-                        else -> "en-IN" // en-IN handles Indian English & Hinglish
+                        else -> "en-IN" // Clean en-IN preserves 100% accuracy for plain English and Indian English
                     }
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE, langTag)
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, langTag)
 
-                    // Multilingual English + Hindi hints for seamless bilingual code-switching
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        putExtra("android.speech.extra.ENABLE_MULTILINGUAL_DETECTION", true)
-                        putExtra("android.speech.extra.LANGUAGE_DETECTION_ALLOWED_LANGUAGES", arrayListOf("en-IN", "hi-IN", "en-US"))
+                    // Only inject bilingual switching hints if Hindi is explicitly chosen
+                    if (preferredLanguage == "hi-IN") {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            putExtra("android.speech.extra.ENABLE_MULTILINGUAL_DETECTION", true)
+                            putExtra("android.speech.extra.LANGUAGE_DETECTION_ALLOWED_LANGUAGES", arrayListOf("hi-IN", "en-IN"))
+                        }
+                        putExtra("android.speech.extra.ADDITIONAL_LANGUAGES", arrayOf("hi-IN", "en-IN"))
                     }
-                    putExtra("android.speech.extra.ADDITIONAL_LANGUAGES", arrayOf("en-IN", "hi-IN"))
                 }
                 putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
                 // Note: EXTRA_PREFER_OFFLINE omitted to allow online or offline recognition without error 13
