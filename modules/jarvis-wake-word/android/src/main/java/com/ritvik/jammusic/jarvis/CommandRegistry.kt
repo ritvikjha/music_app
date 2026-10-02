@@ -737,6 +737,122 @@ object CommandRegistry {
         )
 
         // ==========================================
+        // 20. USER NAME & PERSONAL IDENTITY (<50ms)
+        // ("Do you know my name", "What is my name", "Who am I", "My name is X")
+        // ==========================================
+        COMMANDS.add(
+            CommandDefinition(
+                id = "USER_NAME_QUERY",
+                patterns = listOf(
+                    Regex("""^(?:do\s+you\s+(?:know|remember)\s+)?(?:what(?:'s|\s+is)\s+)?(?:my\s+name|who\s+am\s+i|who\s+i\s+am)$"""),
+                    Regex("""^(?:do\s+you\s+know\s+who\s+i\s+am|tell\s+me\s+my\s+name)$"""),
+                    Regex("""^(?:mera\s+naam\s+(?:kya\s+hai|batao|jante\s+ho)|kya\s+tum\s+mera\s+naam\s+jante\s+ho|main\s+kaun\s+hu)$"""),
+                    Regex("""^(?:mujhe\s+jaante\s+ho|mera\s+naam\s+yaad\s+hai)$""")
+                ),
+                slotExtractor = { emptyMap() },
+                handler = { context, _ ->
+                    val prefs = context.getSharedPreferences("jarvis_user_profile", Context.MODE_PRIVATE)
+                    val savedName = prefs.getString("user_name", null)
+                    val name = if (!savedName.isNullOrBlank()) savedName else "Ritvik"
+                    CommandResult(
+                        success = true,
+                        spokenReply = "Your name is $name, sir. All core system controls are calibrated to your voice signature.",
+                        actionId = "USER_NAME_QUERY"
+                    )
+                },
+                lockScreenSafe = true
+            )
+        )
+
+        COMMANDS.add(
+            CommandDefinition(
+                id = "USER_NAME_SET",
+                patterns = listOf(
+                    Regex("""^(?:my\s+name\s+is|call\s+me|i\s+am)\s+([a-zA-Z0-9\s]+)$"""),
+                    Regex("""^(?:mera\s+naam|mujhe)\s+([a-zA-Z0-9\s]+?)\s+(?:hai|bulao|bolo)$""")
+                ),
+                slotExtractor = { input ->
+                    val m1 = Regex("""^(?:my\s+name\s+is|call\s+me|i\s+am)\s+([a-zA-Z0-9\s]+)$""").find(input)
+                    if (m1 != null) {
+                        mapOf("name" to m1.groupValues[1].trim())
+                    } else {
+                        val m2 = Regex("""^(?:mera\s+naam|mujhe)\s+([a-zA-Z0-9\s]+?)\s+(?:hai|bulao|bolo)$""").find(input)
+                        m2?.let { mapOf("name" to it.groupValues[1].trim()) }
+                    }
+                },
+                handler = { context, slots ->
+                    val rawName = slots["name"] ?: "Sir"
+                    val name = rawName.split(" ").firstOrNull()?.replaceFirstChar { it.uppercase() } ?: rawName
+                    val prefs = context.getSharedPreferences("jarvis_user_profile", Context.MODE_PRIVATE)
+                    prefs.edit().putString("user_name", name).apply()
+                    CommandResult(
+                        success = true,
+                        spokenReply = "Understood, sir. I have updated my neural profile to address you as $name.",
+                        actionId = "USER_NAME_SET"
+                    )
+                },
+                lockScreenSafe = true
+            )
+        )
+
+        COMMANDS.add(
+            CommandDefinition(
+                id = "JARVIS_IDENTITY",
+                patterns = listOf(
+                    Regex("""^(?:who\s+are\s+you|what\s+is\s+your\s+name|what(?:'s)?\s+your\s+name|tum\s+kaun\s+ho|tumhara\s+naam\s+kya\s+hai|apna\s+naam\s+batao)$"""),
+                    Regex("""^(?:introduce\s+yourself|apna\s+intro\s+do|who\s+am\s+i\s+talking\s+to)$""")
+                ),
+                slotExtractor = { emptyMap() },
+                handler = { _, _ ->
+                    CommandResult(
+                        success = true,
+                        spokenReply = "I am JARVIS, your Just A Rather Very Intelligent System. Operating directly on your device, sir.",
+                        actionId = "JARVIS_IDENTITY"
+                    )
+                },
+                lockScreenSafe = true
+            )
+        )
+
+        COMMANDS.add(
+            CommandDefinition(
+                id = "JARVIS_CREATOR",
+                patterns = listOf(
+                    Regex("""^(?:who\s+(?:created|made|built|programmed|developed)\s+you|who\s+is\s+your\s+(?:creator|developer|maker))$"""),
+                    Regex("""^(?:tumhe\s+kisne\s+banaya|tumhe\s+kisne\s+develop\s+kiya|tumhara\s+creator\s+kaun\s+hai)$""")
+                ),
+                slotExtractor = { emptyMap() },
+                handler = { _, _ ->
+                    CommandResult(
+                        success = true,
+                        spokenReply = "I was engineered by Ritvik as an advanced on-device AI system.",
+                        actionId = "JARVIS_CREATOR"
+                    )
+                },
+                lockScreenSafe = true
+            )
+        )
+
+        COMMANDS.add(
+            CommandDefinition(
+                id = "JARVIS_BRAIN_QUERY",
+                patterns = listOf(
+                    Regex("""^(?:do\s+you\s+have\s+a\s+brain|how\s+smart\s+are\s+you|are\s+you\s+intelligent|tum\s+kitne\s+smart\s+ho|kya\s+tumhare\s+paas\s+brain\s+hai)$"""),
+                    Regex("""^(?:how\s+do\s+you\s+work|tum\s+kaise\s+kaam\s+karte\s+ho)$""")
+                ),
+                slotExtractor = { emptyMap() },
+                handler = { _, _ ->
+                    CommandResult(
+                        success = true,
+                        spokenReply = "I run on an on-device neural brain with sub-second response times, capable of system controls, knowledge retrieval, and persistent memory.",
+                        actionId = "JARVIS_BRAIN_QUERY"
+                    )
+                },
+                lockScreenSafe = true
+            )
+        )
+
+        // ==========================================
         // 20. LEVEL 6: APP UI AUTOMATION & STOP
         // ("Stop automation", "Stop scrolling", "Scroll down", "Scroll up", "Auto scroll")
         // ==========================================

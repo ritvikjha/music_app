@@ -1126,6 +1126,116 @@ const matchGreetings: PatternMatcher = (text) => {
 };
 
 // ==========================================
+// User Identity, Persistent Memory & Jarvis Self-Knowledge
+// ==========================================
+const matchIdentityAndMemory: PatternMatcher = (text) => {
+  const clean = text.trim().toLowerCase().replace(/[?.!,;]+$/, '');
+
+  // 1. User Name Query: "do you know my name", "what is my name", "who am I", "tell me my name", "mera naam kya hai"
+  if (
+    /^(?:do\s+you\s+(?:know|remember)\s+)?(?:what(?:'s|\s+is)\s+)?(?:my\s+name|who\s+am\s+i|who\s+i\s+am)$/i.test(clean) ||
+    /^(?:do\s+you\s+know\s+who\s+i\s+am|tell\s+me\s+my\s+name)$/i.test(clean) ||
+    /^(?:mera\s+naam\s+(?:kya\s+hai|batao|jante\s+ho)|kya\s+tum\s+mera\s+naam\s+jante\s+ho|main\s+kaun\s+hu)$/i.test(clean) ||
+    /^(?:mujhe\s+jaante\s+ho|mera\s+naam\s+yaad\s+hai)$/i.test(clean)
+  ) {
+    return {
+      intent: 'RECALL',
+      slots: { query: 'name', type: 'user_name' },
+      confidence: 0.99,
+      spokenReply: 'Checking identity records, sir.',
+      source: 'local',
+    };
+  }
+
+  // 2. User Name Set: "my name is X", "call me X", "mera naam X hai"
+  const mName =
+    clean.match(/^(?:my\s+name\s+is|call\s+me|i\s+am)\s+([a-zA-Z0-9\s]+)$/i) ||
+    clean.match(/^(?:mera\s+naam|mujhe)\s+([a-zA-Z0-9\s]+?)\s+(?:hai|bulao|bolo)$/i);
+  if (mName) {
+    const rawName = mName[1].trim();
+    const name = rawName.split(/\s+/)[0];
+    const capitalized = name.charAt(0).toUpperCase() + name.slice(1);
+    return {
+      intent: 'REMEMBER',
+      slots: { key: 'name', value: capitalized },
+      confidence: 0.99,
+      spokenReply: `Understood, sir. I'll remember that your name is ${capitalized}.`,
+      source: 'local',
+    };
+  }
+
+  // 3. Jarvis Identity: "who are you", "what is your name", "tum kaun ho"
+  if (
+    /^(?:who\s+are\s+you|what\s+is\s+your\s+name|what(?:'s)?\s+your\s+name|tum\s+kaun\s+ho|tumhara\s+naam\s+kya\s+hai|apna\s+naam\s+batao)$/i.test(clean) ||
+    /^(?:introduce\s+yourself|apna\s+intro\s+do|who\s+am\s+i\s+talking\s+to)$/i.test(clean)
+  ) {
+    return {
+      intent: 'CHAT',
+      slots: { type: 'identity' },
+      confidence: 0.99,
+      spokenReply: 'I am JARVIS, your Just A Rather Very Intelligent System. Operating directly on your device, sir.',
+      source: 'local',
+    };
+  }
+
+  // 4. Jarvis Creator: "who made you", "who created you", "tumhe kisne banaya"
+  if (
+    /^(?:who\s+(?:created|made|built|programmed|developed)\s+you|who\s+is\s+your\s+(?:creator|developer|maker))$/i.test(clean) ||
+    /^(?:tumhe\s+kisne\s+banaya|tumhe\s+kisne\s+develop\s+kiya|tumhara\s+creator\s+kaun\s+hai)$/i.test(clean)
+  ) {
+    return {
+      intent: 'CHAT',
+      slots: { type: 'creator' },
+      confidence: 0.99,
+      spokenReply: 'I was engineered by Ritvik as an advanced on-device AI system.',
+      source: 'local',
+    };
+  }
+
+  // 5. Jarvis Brain / Smart query
+  if (
+    /^(?:do\s+you\s+have\s+a\s+brain|how\s+smart\s+are\s+you|are\s+you\s+intelligent|tum\s+kitne\s+smart\s+ho|kya\s+tumhare\s+paas\s+brain\s+hai)$/i.test(clean) ||
+    /^(?:how\s+do\s+you\s+work|tum\s+kaise\s+kaam\s+karte\s+ho)$/i.test(clean)
+  ) {
+    return {
+      intent: 'CHAT',
+      slots: { type: 'brain' },
+      confidence: 0.99,
+      spokenReply: 'I run on an on-device neural brain with sub-second response times, capable of system controls, knowledge retrieval, and persistent memory.',
+      source: 'local',
+    };
+  }
+
+  // 6. Generic "Remember that <fact>"
+  const mRem = clean.match(/^(?:remember\s+(?:that\s+)?|yaad\s+rakhna\s+(?:ki\s+)?)(.+)$/i);
+  if (mRem) {
+    const fact = mRem[1].trim();
+    return {
+      intent: 'REMEMBER',
+      slots: { key: fact.slice(0, 20), value: fact },
+      confidence: 0.95,
+      spokenReply: `Noted in permanent memory: ${fact}.`,
+      source: 'local',
+    };
+  }
+
+  // 7. Generic "Recall <topic>"
+  const mRec = clean.match(/^(?:what\s+did\s+i\s+say\s+about|what\s+do\s+you\s+remember\s+about|recall)\s+(.+)$/i);
+  if (mRec) {
+    const topic = mRec[1].trim();
+    return {
+      intent: 'RECALL',
+      slots: { query: topic },
+      confidence: 0.95,
+      spokenReply: `Checking memory for ${topic}, sir.`,
+      source: 'local',
+    };
+  }
+
+  return null;
+};
+
+// ==========================================
 // Level 6: General App UI Automation Matcher
 // ==========================================
 
@@ -1250,6 +1360,7 @@ const MATCHERS: PatternMatcher[] = [
   matchLeaveRoom,
   matchOpenScreen,
   matchPlaySongOrArtist,
+  matchIdentityAndMemory,
   matchQuestionsOrChat,
 ];
 

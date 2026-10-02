@@ -25,6 +25,7 @@ import { executeTool } from '../tools/toolRegistry';
 import { searchWebKnowledge } from '../tools/webSearchTool';
 import { proactiveEngine } from '../ambient/proactiveEngine';
 import { Linking } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Optional native volume control helper
 let JarvisNativeModule: any = null;
@@ -817,6 +818,16 @@ async function executeLiveIntent(
         return { ok: false, spokenReply: 'What would you like me to remember, sir?' };
       }
       await saveNote(key, value);
+      if (key.toLowerCase() === 'name') {
+        try {
+          const storedAuth = await AsyncStorage.getItem('@jam_auth_user');
+          if (storedAuth) {
+            const parsed = JSON.parse(storedAuth);
+            parsed.username = value;
+            await AsyncStorage.setItem('@jam_auth_user', JSON.stringify(parsed));
+          }
+        } catch {}
+      }
       return {
         ok: true,
         spokenReply: intentResult.spokenReply || `Noted in permanent memory: ${key} is ${value}.`,
@@ -829,6 +840,37 @@ async function executeLiveIntent(
       if (!query) {
         return { ok: false, spokenReply: 'What would you like me to look up, sir?' };
       }
+
+      // Check if querying user name / personal identity
+      if (query.toLowerCase() === 'name' || slots?.type === 'user_name') {
+        const note = await findNote('name');
+        if (note && note.value) {
+          return {
+            ok: true,
+            spokenReply: `Your name is ${note.value}, sir. Registered across all neural systems.`,
+            toast: { message: `Identity: ${note.value}`, type: 'info' },
+          };
+        }
+        try {
+          const authRaw = await AsyncStorage.getItem('@jam_auth_user');
+          if (authRaw) {
+            const parsed = JSON.parse(authRaw);
+            if (parsed && parsed.username) {
+              return {
+                ok: true,
+                spokenReply: `Your name is ${parsed.username}, sir. All systems are calibrated to your voice.`,
+                toast: { message: `Identity: ${parsed.username}`, type: 'info' },
+              };
+            }
+          }
+        } catch {}
+        return {
+          ok: true,
+          spokenReply: 'Your name is Ritvik, sir. My creator and operator.',
+          toast: { message: 'Identity: Ritvik', type: 'info' },
+        };
+      }
+
       const note = await findNote(query);
       if (note) {
         const replyFn = pickVariant(REPLIES.RECALL_FOUND);

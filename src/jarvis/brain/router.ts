@@ -270,12 +270,97 @@ export async function parseIntent(
     return localResult;
   }
 
-  // Final fallback UNKNOWN
+  // Final fallback: Universal On-Device Cognitive Brain
+  // Instead of failing with "Sorry, I can't help with that", handle any open-ended question,
+  // personal identity query, humor, or knowledge query in one go.
+  return resolveUniversalFallback(transcript, startTime);
+}
+
+/**
+ * Universal fallback handler for un-patterned open queries.
+ * Eliminates the need to manually add regexes for every conversational scenario.
+ */
+function resolveUniversalFallback(transcript: string, startTime: number): IntentResult {
+  const clean = transcript.trim().toLowerCase().replace(/[?.!,;]+$/, '');
+
+  // 1. User Identity & Name
+  if (/(?:my\s+name|who\s+am\s+i|who\s+i\s+am|mera\s+naam|main\s+kaun\s+hu)/i.test(clean)) {
+    return {
+      intent: 'RECALL',
+      slots: { query: 'name', type: 'user_name' },
+      confidence: 0.95,
+      spokenReply: 'Your name is Ritvik, sir. All core access controls are linked to your profile.',
+      source: 'local',
+      latencyMs: Date.now() - startTime,
+    };
+  }
+
+  // 2. Jarvis Identity & Self-Awareness
+  if (/(?:who\s+are\s+you|what\s+is\s+your\s+name|what(?:'s)?\s+your\s+name|tum\s+kaun\s+ho|tumhara\s+naam)/i.test(clean)) {
+    return {
+      intent: 'CHAT',
+      slots: { query: transcript },
+      confidence: 0.95,
+      spokenReply: 'I am JARVIS, your Just A Rather Very Intelligent System. Ready and at your service, sir.',
+      source: 'local',
+      latencyMs: Date.now() - startTime,
+    };
+  }
+
+  if (/(?:who\s+(?:made|created|built|developed)\s+you|tumhe\s+kisne\s+banaya|creator)/i.test(clean)) {
+    return {
+      intent: 'CHAT',
+      slots: { query: transcript },
+      confidence: 0.95,
+      spokenReply: 'I was engineered by Ritvik as an advanced on-device AI system.',
+      source: 'local',
+      latencyMs: Date.now() - startTime,
+    };
+  }
+
+  // 3. Humor & Jokes
+  if (/(?:joke|hasao|funny|laugh)/i.test(clean)) {
+    const jokes = [
+      'Why do programmers prefer dark mode? Because light attracts bugs, sir.',
+      'There are 10 types of people in the world: those who understand binary, and those who do not.',
+      'An algorithm is what programmers use when they do not want to explain what they did, sir.',
+      'Artificial intelligence is no match for natural stupidity, though I strive to bridge the gap.'
+    ];
+    return {
+      intent: 'CHAT',
+      slots: { query: transcript },
+      confidence: 0.95,
+      spokenReply: jokes[Math.floor(Math.random() * jokes.length)],
+      source: 'local',
+      latencyMs: Date.now() - startTime,
+    };
+  }
+
+  // 4. Gratitude & Social
+  if (/(?:thank\s+you|thanks|shukriya|dhanyawad|good\s+job|well\s+done|great\s+job)/i.test(clean)) {
+    const replies = [
+      'Always a pleasure to be of service, sir.',
+      'Anytime, sir. Standing by for your next instruction.',
+      'Glad I could be of assistance, sir.',
+      'All in a day\'s work, sir.'
+    ];
+    return {
+      intent: 'CHAT',
+      slots: { query: transcript },
+      confidence: 0.95,
+      spokenReply: replies[Math.floor(Math.random() * replies.length)],
+      source: 'local',
+      latencyMs: Date.now() - startTime,
+    };
+  }
+
+  // 5. Universal Open Knowledge & Question Route:
+  // Automatically runs on-device Wikipedia & DuckDuckGo search via executor
   return {
-    intent: 'UNKNOWN',
-    slots: { raw: transcript },
-    confidence: 0,
-    spokenReply: "Sorry, I'm not sure how to help with that.",
+    intent: 'CHAT',
+    slots: { query: transcript },
+    confidence: 0.75,
+    spokenReply: 'Let me check that for you.',
     source: 'local',
     latencyMs: Date.now() - startTime,
   };
